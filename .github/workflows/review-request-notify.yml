@@ -1,0 +1,82 @@
+name: レビュー依頼のGoogle Chat通知
+
+on:
+  pull_request:
+    types: [review_requested, ready_for_review]
+
+jobs:
+  notify:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: 対象確認 + Google Chatへ通知
+        env:
+          GCHAT_WEBHOOK_URL: ${{ secrets.GCHAT_WEBHOOK_URL }}
+          GCHAT_SENSEI_ID: ${{ secrets.GCHAT_SENSEI_ID }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          REQUESTER: ${{ github.event.pull_request.user.login }}
+          REQUESTER_AVATAR: ${{ github.event.pull_request.user.avatar_url }}
+          REPO_NAME: ${{ github.event.repository.name }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          ADDITIONS: ${{ github.event.pull_request.additions }}
+          DELETIONS: ${{ github.event.pull_request.deletions }}
+          CHANGED_FILES: ${{ github.event.pull_request.changed_files }}
+          LABELS_JSON: ${{ toJSON(github.event.pull_request.labels) }}
+          REQUESTED_REVIEWERS_JSON: ${{ toJSON(github.event.pull_request.requested_reviewers) }}
+          REQUESTED_TEAMS_JSON: ${{ toJSON(github.event.pull_request.requested_teams) }}
+        run: |
+          # review_requested/ready_for_reviewのどちらのイベントでも,
+          # PRオブジェクト自体の"現在レビュー待ちの相手"を見れば同じロジックで
+          # 判定できる (個人指定/チーム指定のどちらも, GitHub Actionsの式構文に
+          # 頼らずjqで確実に判定する)
+          IS_TARGET=$(jq -n \
+            --argjson reviewers "$REQUESTED_REVIEWERS_JSON" \
+            --argjson teams "$REQUESTED_TEAMS_JSON" \
+            '(($reviewers // []) | any(.login == "yamaokilab")) or (($teams // []) | any(.slug == "admin"))')
+
+          if [ "$IS_TARGET" != "true" ]; then
+            echo "先生 (個人またはadminチーム) 宛のレビュー依頼ではないのでスキップします"
+            exit 0
+          fi
+
+          curl -sf -X POST "$GCHAT_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n \
+              --arg sensei "$GCHAT_SENSEI_ID" \
+              --arg number "$PR_NUMBER" \
+              --arg requester "$REQUESTER" \
+              --arg avatar "$REQUESTER_AVATAR" \
+              --arg title "$PR_TITLE" \
+              --arg url "$PR_URL" \
+              --arg repo "$REPO_NAME" \
+              --arg headRef "$HEAD_REF" \
+              --arg baseRef "$BASE_REF" \
+              --arg diffstat "+${ADDITIONS} -${DELETIONS} (${CHANGED_FILES} ファイル)" \
+              --argjson labels "$LABELS_JSON" \
+              '
+              def labelChips: if ($labels | length) > 0
+                then [{ chipList: { chips: ($labels | map({ label: .name })) } }]
+                else [] end;
+              {
+                text: "<\($sensei)> [\($repo)] \($requester)さんからレビュー依頼です",
+                cardsV2: [{
+                  cardId: "review-request",
+                  card: {
+                    header: { title: "#\($number) \($title)", subtitle: $repo, imageUrl: $avatar, imageType: "CIRCLE" },
+                    sections: [{
+                      widgets: (
+                        [
+                          { decoratedText: { startIcon: { knownIcon: "PERSON" }, topLabel: "作成者", text: $requester } },
+                          { decoratedText: { text: "\($headRef) → \($baseRef)" } },
+                          { decoratedText: { text: $diffstat } }
+                        ] + labelChips + [
+                          { buttonList: { buttons: [{ text: "PRを開く", onClick: { openLink: { url: $url } } }] } }
+                        ]
+                      )
+                    }]
+                  }
+                }]
+              }')"
