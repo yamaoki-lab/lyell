@@ -1,4 +1,4 @@
-# PR の Go のコードを, 使う予定のある3つの OS (サーバの Linux, ネイティブクライアントの macOS と Windows) で確かめる.
+# PR の Go のコードを, 使う予定のある対象 (サーバの Linux, ネイティブクライアントの macOS, Windows, Android, 研究室の機体の linux/arm64) で確かめる.
 # ファイルの同期や rename は OS ごとに振る舞いが違い, OS ごとのファイル (sync_dir_windows.go 等) もあるので, 1つの OS だけでは足りない.
 name: CI
 
@@ -24,6 +24,9 @@ jobs:
           # データの競合の検出 (-race) は重いので, Linux だけで行う.
           - os: ubuntu-latest
             race: -race
+          # 研究室の機体 (Jetson 等) と同じ arm64 の Linux で, テストを実際に回す.
+          - os: ubuntu-24.04-arm
+            race: ""
           - os: macos-latest
             race: ""
           - os: windows-latest
@@ -37,7 +40,7 @@ jobs:
         with:
           go-version-file: go.mod # yamaoki-lint:ignore
       - name: gofmt
-        if: runner.os == 'Linux'
+        if: matrix.os == 'ubuntu-latest'
         run: |
           unformatted=$(gofmt -l .)
           if [ -n "$unformatted" ]; then
@@ -46,4 +49,8 @@ jobs:
             exit 1
           fi
       - run: go vet ./...
+      # Android はテストを回す環境が無いので, コンパイルが通るかと go vet の点検だけを見る.
+      - name: go vet (android/arm64)
+        if: matrix.os == 'ubuntu-latest'
+        run: GOOS=android GOARCH=arm64 go vet ./...
       - run: go test ${{ matrix.race }} ./...
