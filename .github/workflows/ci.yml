@@ -1,0 +1,49 @@
+# PR の Go のコードを, 使う予定のある3つの OS (サーバの Linux, ネイティブクライアントの macOS と Windows) で確かめる.
+# ファイルの同期や rename は OS ごとに振る舞いが違い, OS ごとのファイル (sync_dir_windows.go 等) もあるので, 1つの OS だけでは足りない.
+name: CI
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+# 同じ PR に続けて push したら, 古い方の実行は止める.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    # PR の画面と Ruleset に出る確認の名前. matrix の値を全部並べた名前にならないようにする.
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # データの競合の検出 (-race) は重いので, Linux だけで行う.
+          - os: ubuntu-latest
+            race: -race
+          - os: macos-latest
+            race: ""
+          - os: windows-latest
+            race: ""
+    runs-on: ${{ matrix.os }}
+    # 止まらなくなった時に, 既定の6時間まで走らせ続けないようにする.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod # yamaoki-lint:ignore
+      - name: gofmt
+        if: runner.os == 'Linux'
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "gofmt が必要なファイル:"
+            echo "$unformatted"
+            exit 1
+          fi
+      - run: go vet ./...
+      - run: go test ${{ matrix.race }} ./...
