@@ -20,9 +20,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Ubuntu は latest ではなく, 研究室の機械に合わせて固定する. x64 はホストと同じ 26.04, arm64 は Jetson の JetPack と同じ 24.04. 研究室の機械を上げた時に, ここも上げる.
         include:
-          # データの競合の検出 (-race) は重いので, Linux だけで行う.
-          - os: ubuntu-latest
+          # データの競合の検出 (-race) は重いので, x64 の Linux だけで行う.
+          - os: ubuntu-26.04
             race: -race
           # 研究室の機体 (Jetson 等) と同じ arm64 の Linux で, テストを実際に回す.
           - os: ubuntu-24.04-arm
@@ -40,7 +41,7 @@ jobs:
         with:
           go-version-file: go.mod # yamaoki-lint:ignore
       - name: gofmt
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-26.04'
         run: |
           unformatted=$(gofmt -l .)
           if [ -n "$unformatted" ]; then
@@ -51,6 +52,6 @@ jobs:
       - run: go vet ./...
       # Android はテストを回す環境が無いので, コンパイルが通るかと go vet の点検だけを見る.
       - name: go vet (android/arm64)
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-26.04'
         run: GOOS=android GOARCH=arm64 go vet ./...
       - run: go test ${{ matrix.race }} ./...
