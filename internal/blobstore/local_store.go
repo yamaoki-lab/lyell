@@ -24,7 +24,9 @@ func NewLocalStore(root string) *LocalStore {
 // Put は, 同じファイルシステムの上の一時的な置き場 (root/.tmp/) に data を書き, 書き終えてから rename で最終的なパスへ移す. rename は同じファイルシステムの中でだけ不可分なので, システムの一時ディレクトリ (os.TempDir) は使わない.
 //
 // Put が nil を返した時には, 内容とパスがディスクに届いている. 呼び出し側は, この後に DB へ記録してよい. そのために, rename の前にファイルを fsync し, rename の後に置き先のディレクトリを fsync する. 新しく作ったディレクトリも, その親を fsync する.
-func (s *LocalStore) Put(_ context.Context, sum Sum, data io.Reader) error {
+//
+// LocalStore は置き場が1つで, 書き込みの選択肢を1つも知らないので, opts は使わない.
+func (s *LocalStore) Put(_ context.Context, sum Sum, data io.Reader, _ ...PutOption) error {
 	finalPath := s.path(sum)
 	if err := mkdirAllDurable(filepath.Dir(finalPath)); err != nil {
 		return err
@@ -59,6 +61,16 @@ func (s *LocalStore) Put(_ context.Context, sum Sum, data io.Reader) error {
 		return err
 	}
 	return syncDir(filepath.Dir(finalPath))
+}
+
+// CheckPutOptions は, 必須の選択肢があれば断り, 希望は無視する. LocalStore は書き込みの選択肢を1つも知らないため.
+func (s *LocalStore) CheckPutOptions(opts ...PutOption) error {
+	for _, opt := range opts {
+		if opt.Required() {
+			return &UnsupportedOptionError{Option: opt, Reason: "LocalStore は書き込みの選択肢を扱わない"}
+		}
+	}
+	return nil
 }
 
 // Open は, sum の blob を読み取る ReadCloser を返す.

@@ -17,9 +17,9 @@ type countingBackend struct {
 	puts int
 }
 
-func (b *countingBackend) Put(ctx context.Context, sum Sum, data io.Reader) error {
+func (b *countingBackend) Put(ctx context.Context, sum Sum, data io.Reader, opts ...PutOption) error {
 	b.puts++
-	return b.Backend.Put(ctx, sum, data)
+	return b.Backend.Put(ctx, sum, data, opts...)
 }
 
 func TestStore_PutThenOpenRoundTrips(t *testing.T) {
@@ -117,12 +117,12 @@ type blockingBackend struct {
 	release chan struct{}
 }
 
-func (b *blockingBackend) Put(ctx context.Context, sum Sum, data io.Reader) error {
+func (b *blockingBackend) Put(ctx context.Context, sum Sum, data io.Reader, opts ...PutOption) error {
 	if sum == b.block {
 		close(b.entered)
 		<-b.release
 	}
-	return b.countingBackend.Put(ctx, sum, data)
+	return b.countingBackend.Put(ctx, sum, data, opts...)
 }
 
 func newBlockingBackend(t *testing.T, block Sum) *blockingBackend {

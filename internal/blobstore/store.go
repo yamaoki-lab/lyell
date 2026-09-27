@@ -14,7 +14,11 @@ import (
 // Backend は, 置き場の実装が満たすもの. 使う側は直接呼ばずに, New で包んだ Store を使う.
 type Backend interface {
 	// Put は sum の blob を書き込む. data は最後 (io.EOF) まで読んでから確定し, 読み取りがエラーになったら確定しない. 途中でクラッシュしても, 中途半端な内容が見えることは無い. Store は, 中身が sum と合わない時に data の読み取りをエラーにするので, この約束を守れば合わない blob は置かれない.
-	Put(ctx context.Context, sum Sum, data io.Reader) error
+	//
+	// opts は, Store が先に CheckPutOptions で確かめてから渡す.
+	Put(ctx context.Context, sum Sum, data io.Reader, opts ...PutOption) error
+	// CheckPutOptions は, 書かずに選択肢だけを確かめる. 扱えない選択肢があれば *UnsupportedOptionError を返す. 知らない種類は, 必須 (Required が true) なら断り, 希望なら無視する.
+	CheckPutOptions(opts ...PutOption) error
 	// Open は sum の blob を読み取る ReadCloser を返す.
 	Open(ctx context.Context, sum Sum) (io.ReadCloser, error)
 	// Exists は sum の blob が既にあるかを報告する.
@@ -47,7 +51,12 @@ func (e *MismatchError) Error() string {
 // sum の blob が既にある時も, 渡した側の計算を信じずに data を最後まで読んで確かめる. 確かめずに成功を返すと, 名前を取り違えた中身が保存されないまま, 保存できたと思われてしまうため. この時はディスクに書かない. 転送そのものを省きたい時は, 先に Exists で確かめる.
 //
 // 同じ sum への Put は, 同時には書かない. 後から来た Put は先の Put が終わるのを待ち, その後は既にある時と同じく確かめるだけになる. 違う sum への Put は互いに待たない.
-func (s *Store) Put(ctx context.Context, sum Sum, data io.Reader) error {
+//
+// opts は, data を読む前に CheckPutOptions で確かめる. 扱えない選択肢があれば, 何も読まず何も置かずに *UnsupportedOptionError を返す. 既にある blob は置き直さないので, その時 opts は使われない (既にある blob の置き場を変えるのは, 別の操作として扱う).
+func (s *Store) Put(ctx context.Context, sum Sum, data io.Reader, opts ...PutOption) error {
+	if err := s.backend.CheckPutOptions(opts...); err != nil {
+		return err
+	}
 	unlock, err := s.locks.lock(ctx, sum)
 	if err != nil {
 		return err
@@ -65,7 +74,12 @@ func (s *Store) Put(ctx context.Context, sum Sum, data io.Reader) error {
 		return err
 	}
 	defer unlock()
-	return s.backend.Put(ctx, sum, v)
+	return s.backend.Put(ctx, sum, v, opts...)
+}
+
+// CheckPutOptions は, 書かずに選択肢だけを確かめる. 設定を読んだ時や画面から値を受け取った時に呼べば, 最初の書き込みより前に誤りに気付ける.
+func (s *Store) CheckPutOptions(opts ...PutOption) error {
+	return s.backend.CheckPutOptions(opts...)
 }
 
 // Open は, sum の blob を読み取る ReadCloser を返す.
