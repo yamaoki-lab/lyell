@@ -20,12 +20,12 @@ func countRevisions(t *testing.T, s *Store) int {
 func TestCommitRevision_AdvancesHead(t *testing.T) {
 	s, _ := openTestStore(t)
 	ctx := context.Background()
-	item, err := s.CreateItem(ctx, KindAsset, testContent("r1"), strings.NewReader("r1"))
+	item, err := s.CreateItem(ctx, newTestItem("r1"))
 	if err != nil {
 		t.Fatalf("CreateItem() error = %v, want nil", err)
 	}
 
-	r2, err := s.CommitRevision(ctx, item.ID, item.Head, []ID{item.Head}, testContent("r2"), strings.NewReader("r2"))
+	r2, err := s.CommitRevision(ctx, NewRevision{ItemID: item.ID, From: item.Head, Parents: []ID{item.Head}, Content: testContent("r2"), Data: strings.NewReader("r2")})
 	if err != nil {
 		t.Fatalf("CommitRevision() error = %v, want nil", err)
 	}
@@ -49,19 +49,19 @@ func TestCommitRevision_AdvancesHead(t *testing.T) {
 func TestCommitRevision_RejectsStaleHeadWithoutWriting(t *testing.T) {
 	s, _ := openTestStore(t)
 	ctx := context.Background()
-	item, err := s.CreateItem(ctx, KindAsset, testContent("r1"), strings.NewReader("r1"))
+	item, err := s.CreateItem(ctx, newTestItem("r1"))
 	if err != nil {
 		t.Fatalf("CreateItem() error = %v, want nil", err)
 	}
 	r1 := item.Head
-	r2, err := s.CommitRevision(ctx, item.ID, r1, []ID{r1}, testContent("r2"), strings.NewReader("r2"))
+	r2, err := s.CommitRevision(ctx, NewRevision{ItemID: item.ID, From: r1, Parents: []ID{r1}, Content: testContent("r2"), Data: strings.NewReader("r2")})
 	if err != nil {
 		t.Fatalf("CommitRevision() error = %v, want nil", err)
 	}
 	before := countRevisions(t, s)
 
 	// head は r2 に進んでいるのに, 古い r1 を前提にして足そうとする.
-	_, err = s.CommitRevision(ctx, item.ID, r1, []ID{r1}, testContent("stale"), strings.NewReader("stale"))
+	_, err = s.CommitRevision(ctx, NewRevision{ItemID: item.ID, From: r1, Parents: []ID{r1}, Content: testContent("stale"), Data: strings.NewReader("stale")})
 	if !errors.Is(err, ErrNotFastForward) {
 		t.Fatalf("古い head を前提にした CommitRevision() error = %v, want ErrNotFastForward", err)
 	}
@@ -77,7 +77,7 @@ func TestCommitRevision_RejectsStaleHeadWithoutWriting(t *testing.T) {
 func TestCommitRevision_OnlyOneOfConcurrentWritersWins(t *testing.T) {
 	s, _ := openTestStore(t)
 	ctx := context.Background()
-	item, err := s.CreateItem(ctx, KindAsset, testContent("r1"), strings.NewReader("r1"))
+	item, err := s.CreateItem(ctx, newTestItem("r1"))
 	if err != nil {
 		t.Fatalf("CreateItem() error = %v, want nil", err)
 	}
@@ -94,7 +94,7 @@ func TestCommitRevision_OnlyOneOfConcurrentWritersWins(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			_, err := s.CommitRevision(ctx, item.ID, item.Head, []ID{item.Head}, testContent("concurrent"), strings.NewReader("concurrent"))
+			_, err := s.CommitRevision(ctx, NewRevision{ItemID: item.ID, From: item.Head, Parents: []ID{item.Head}, Content: testContent("concurrent"), Data: strings.NewReader("concurrent")})
 			errs <- err
 		}()
 	}
@@ -124,17 +124,17 @@ func TestCommitRevision_OnlyOneOfConcurrentWritersWins(t *testing.T) {
 func TestCommitRevision_MergeMayHaveParentInAnotherItem(t *testing.T) {
 	s, _ := openTestStore(t)
 	ctx := context.Background()
-	a, err := s.CreateItem(ctx, KindAsset, testContent("a"), strings.NewReader("a"))
+	a, err := s.CreateItem(ctx, newTestItem("a"))
 	if err != nil {
 		t.Fatalf("CreateItem(a) error = %v, want nil", err)
 	}
-	b, err := s.CreateItem(ctx, KindAsset, testContent("b"), strings.NewReader("b"))
+	b, err := s.CreateItem(ctx, newTestItem("b"))
 	if err != nil {
 		t.Fatalf("CreateItem(b) error = %v, want nil", err)
 	}
 
 	// b に a を統合する: 新しい revision は, b の head と a の head の両方を親に持つ.
-	if _, err := s.CommitRevision(ctx, b.ID, b.Head, []ID{b.Head, a.Head}, testContent("merged"), strings.NewReader("merged")); err != nil {
+	if _, err := s.CommitRevision(ctx, NewRevision{ItemID: b.ID, From: b.Head, Parents: []ID{b.Head, a.Head}, Content: testContent("merged"), Data: strings.NewReader("merged")}); err != nil {
 		t.Errorf("統合の CommitRevision() error = %v, want nil", err)
 	}
 }
@@ -142,7 +142,7 @@ func TestCommitRevision_MergeMayHaveParentInAnotherItem(t *testing.T) {
 func TestCommitRevision_RejectsBadInput(t *testing.T) {
 	s, _ := openTestStore(t)
 	ctx := context.Background()
-	item, err := s.CreateItem(ctx, KindAsset, testContent("r1"), strings.NewReader("r1"))
+	item, err := s.CreateItem(ctx, newTestItem("r1"))
 	if err != nil {
 		t.Fatalf("CreateItem() error = %v, want nil", err)
 	}
@@ -155,7 +155,7 @@ func TestCommitRevision_RejectsBadInput(t *testing.T) {
 		parents []ID
 		want    error
 	}{
-		{name: "親に前提の head が無い", itemID: item.ID, from: item.Head, parents: nil},
+		{name: "親を書いたのに前提の head が無い", itemID: item.ID, from: item.Head, parents: []ID{other}},
 		{name: "親が重なっている", itemID: item.ID, from: item.Head, parents: []ID{item.Head, item.Head}},
 		{name: "無い revision を親にする", itemID: item.ID, from: item.Head, parents: []ID{item.Head, other}},
 		{name: "無い item", itemID: other, from: item.Head, parents: []ID{item.Head}},
@@ -163,12 +163,41 @@ func TestCommitRevision_RejectsBadInput(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			before := countRevisions(t, s)
-			if _, err := s.CommitRevision(ctx, tt.itemID, tt.from, tt.parents, testContent("bad"), strings.NewReader("bad")); err == nil {
+			if _, err := s.CommitRevision(ctx, NewRevision{ItemID: tt.itemID, From: tt.from, Parents: tt.parents, Content: testContent("bad"), Data: strings.NewReader("bad")}); err == nil {
 				t.Errorf("CommitRevision() error = nil, want error")
 			}
 			if after := countRevisions(t, s); after != before {
 				t.Errorf("断った時の revision の数 = %d, want %d", after, before)
 			}
 		})
+	}
+}
+
+func TestCommitRevision_EmptyParentsMeansFastForwardFromHead(t *testing.T) {
+	s, _ := openTestStore(t)
+	ctx := context.Background()
+	item, err := s.CreateItem(ctx, newTestItem("r1"))
+	if err != nil {
+		t.Fatalf("CreateItem() error = %v, want nil", err)
+	}
+
+	// Parents を書かなければ, From だけが親になる.
+	r2, err := s.CommitRevision(ctx, NewRevision{ItemID: item.ID, From: item.Head, Content: testContent("r2"), Data: strings.NewReader("r2")})
+	if err != nil {
+		t.Fatalf("CommitRevision() error = %v, want nil", err)
+	}
+	rev, err := s.Revision(ctx, r2)
+	if err != nil {
+		t.Fatalf("Revision() error = %v, want nil", err)
+	}
+	if len(rev.Parents) != 1 || rev.Parents[0] != item.Head {
+		t.Errorf("親 = %v, want [%s]", rev.Parents, item.Head)
+	}
+}
+
+func TestCreateItem_RequiresData(t *testing.T) {
+	s, _ := openTestStore(t)
+	if _, err := s.CreateItem(context.Background(), NewItem{Kind: KindAsset, Content: testContent("x")}); err == nil {
+		t.Errorf("Data の無い CreateItem() error = nil, want error")
 	}
 }

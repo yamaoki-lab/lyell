@@ -72,18 +72,28 @@ type Revision struct {
 // ErrNotFound は, 指定した item や revision が無い時のエラー.
 var ErrNotFound = errors.New("itemstore: 見つからない")
 
-// CreateItem は, kind の item を, content を中身に持つ最初の revision と一緒に作る. data は中身のバイト列 (blob) で, SHA-256 が content.Blob と合わなければ何も記録しない.
+// NewItem は, CreateItem で作る item の説明. 項目を足しても呼び出し側を直さずに済むよう, 引数を並べずにこの形で受け取る. 書かなかった項目は空の値になる.
+type NewItem struct {
+	Kind    Kind
+	Content Content   // 最初の revision の中身
+	Data    io.Reader // 中身のバイト列 (blob). SHA-256 が Content.Blob と合わなければ何も記録しない
+	// PutOptions は, blob を書く時の選択肢 (置き場の指定等). 無ければ置き場の既定に従う.
+	PutOptions []blobstore.PutOption
+}
+
+// CreateItem は, item を最初の revision と一緒に作る.
 //
 // blob を先に書き (書き終えるとディスクに届いている), その後で item と revision を1つのトランザクションで記録する. 逆の順にすると, 記録した後に落ちた時に, 無い blob を指す revision が残る. この順なら, 途中で落ちても孤立した blob が残るだけで, 後の GC で回収できる.
-func (s *Store) CreateItem(ctx context.Context, kind Kind, content Content, data io.Reader) (Item, error) {
+func (s *Store) CreateItem(ctx context.Context, n NewItem) (Item, error) {
+	kind, content := n.Kind, n.Content
 	if err := kind.validate(); err != nil {
 		return Item{}, err
 	}
 	if err := content.validate(); err != nil {
 		return Item{}, err
 	}
-	if err := s.blobs.Put(ctx, content.Blob, data); err != nil {
-		return Item{}, fmt.Errorf("blob を書けない: %w", err)
+	if err := s.putBlob(ctx, content.Blob, n.Data, n.PutOptions); err != nil {
+		return Item{}, err
 	}
 	itemID, err := NewID()
 	if err != nil {
@@ -112,6 +122,17 @@ func (s *Store) CreateItem(ctx context.Context, kind Kind, content Content, data
 		return Item{}, err
 	}
 	return Item{ID: itemID, Kind: kind, Head: revID}, nil
+}
+
+// putBlob は, 記録する前に blob を書く. CreateItem と CommitRevision で共通.
+func (s *Store) putBlob(ctx context.Context, sum blobstore.Sum, data io.Reader, opts []blobstore.PutOption) error {
+	if data == nil {
+		return errors.New("中身のバイト列 (Data) が無い")
+	}
+	if err := s.blobs.Put(ctx, sum, data, opts...); err != nil {
+		return fmt.Errorf("blob を書けない: %w", err)
+	}
+	return nil
 }
 
 func insertRevision(ctx context.Context, tx *sql.Tx, id, itemID ID, c Content) error {

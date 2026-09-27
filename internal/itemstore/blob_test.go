@@ -52,7 +52,7 @@ func TestCreateItem_WritesBlobThenRecords(t *testing.T) {
 	ctx := context.Background()
 	content := testContent("hello")
 
-	if _, err := s.CreateItem(ctx, KindAsset, content, strings.NewReader("hello")); err != nil {
+	if _, err := s.CreateItem(ctx, NewItem{Kind: KindAsset, Content: content, Data: strings.NewReader("hello")}); err != nil {
 		t.Fatalf("CreateItem() error = %v, want nil", err)
 	}
 
@@ -77,14 +77,14 @@ func TestCreateItem_BlobFailureRecordsNothing(t *testing.T) {
 	content := testContent("hello")
 
 	// 中身が名前 (SHA-256) と合わない.
-	_, err := s.CreateItem(ctx, KindAsset, content, strings.NewReader("goodbye"))
+	_, err := s.CreateItem(ctx, NewItem{Kind: KindAsset, Content: content, Data: strings.NewReader("goodbye")})
 	var mismatch *blobstore.MismatchError
 	if !errors.As(err, &mismatch) {
 		t.Errorf("合わない中身の CreateItem() error = %v, want *blobstore.MismatchError", err)
 	}
 
 	// 中身を読む途中で失敗する.
-	if _, err := s.CreateItem(ctx, KindAsset, content, io.MultiReader(strings.NewReader("hel"), errReader{})); err == nil {
+	if _, err := s.CreateItem(ctx, NewItem{Kind: KindAsset, Content: content, Data: io.MultiReader(strings.NewReader("hel"), errReader{})}); err == nil {
 		t.Errorf("読む途中で失敗する CreateItem() error = nil, want error")
 	}
 
@@ -103,7 +103,7 @@ func TestCreateItem_RecordFailureLeavesOnlyOrphanBlob(t *testing.T) {
 
 	// blob を書いた後の記録を失敗させるため, 書き込み用の DB を先に閉じておく.
 	s.write.Close()
-	if _, err := s.CreateItem(ctx, KindAsset, content, strings.NewReader("hello")); err == nil {
+	if _, err := s.CreateItem(ctx, NewItem{Kind: KindAsset, Content: content, Data: strings.NewReader("hello")}); err == nil {
 		t.Fatalf("記録に失敗する CreateItem() error = nil, want error")
 	}
 
@@ -119,18 +119,18 @@ func TestCreateItem_RecordFailureLeavesOnlyOrphanBlob(t *testing.T) {
 func TestCommitRevision_RejectedLeavesOnlyOrphanBlob(t *testing.T) {
 	s, _ := openTestStore(t)
 	ctx := context.Background()
-	item, err := s.CreateItem(ctx, KindAsset, testContent("r1"), strings.NewReader("r1"))
+	item, err := s.CreateItem(ctx, newTestItem("r1"))
 	if err != nil {
 		t.Fatalf("CreateItem() error = %v, want nil", err)
 	}
-	if _, err := s.CommitRevision(ctx, item.ID, item.Head, []ID{item.Head}, testContent("r2"), strings.NewReader("r2")); err != nil {
+	if _, err := s.CommitRevision(ctx, NewRevision{ItemID: item.ID, From: item.Head, Parents: []ID{item.Head}, Content: testContent("r2"), Data: strings.NewReader("r2")}); err != nil {
 		t.Fatalf("CommitRevision() error = %v, want nil", err)
 	}
 	before := countRows(t, s)
 
 	// 古い head を前提にして断られても, 先に書いた blob は孤立して残るだけ.
 	stale := testContent("stale")
-	if _, err := s.CommitRevision(ctx, item.ID, item.Head, []ID{item.Head}, stale, strings.NewReader("stale")); !errors.Is(err, ErrNotFastForward) {
+	if _, err := s.CommitRevision(ctx, NewRevision{ItemID: item.ID, From: item.Head, Parents: []ID{item.Head}, Content: stale, Data: strings.NewReader("stale")}); !errors.Is(err, ErrNotFastForward) {
 		t.Fatalf("CommitRevision() error = %v, want ErrNotFastForward", err)
 	}
 	if ok, _ := s.blobs.Exists(ctx, stale.Blob); !ok {
@@ -146,3 +146,23 @@ func TestCommitRevision_RejectedLeavesOnlyOrphanBlob(t *testing.T) {
 type errReader struct{}
 
 func (errReader) Read([]byte) (int, error) { return 0, errors.New("読み取りに失敗した") }
+
+// requiredOption は, LocalStore が扱えない必須の書き込みの選択肢.
+type requiredOption struct{}
+
+func (requiredOption) Required() bool { return true }
+
+func TestCreateItem_PassesPutOptionsToBlobstore(t *testing.T) {
+	s, _ := openTestStore(t)
+	n := newTestItem("hello")
+	n.PutOptions = []blobstore.PutOption{requiredOption{}}
+
+	_, err := s.CreateItem(context.Background(), n)
+	var unsupported *blobstore.UnsupportedOptionError
+	if !errors.As(err, &unsupported) {
+		t.Fatalf("扱えない必須の選択肢での CreateItem() error = %v, want *blobstore.UnsupportedOptionError", err)
+	}
+	if n := countRows(t, s); n != 0 {
+		t.Errorf("blob を断られたのに, 行が %d 件記録された", n)
+	}
+}
