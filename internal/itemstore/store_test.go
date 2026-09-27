@@ -258,8 +258,8 @@ func TestMigrate_FailedStepIsRolledBack(t *testing.T) {
 	}
 }
 
-// uuid は, テスト用の16バイトの ID を作る.
-func uuid(b byte) []byte {
+// testID は, テスト用の16バイトの ID を作る.
+func testID(b byte) []byte {
 	id := make([]byte, 16)
 	id[15] = b
 	return id
@@ -277,7 +277,7 @@ func TestSchema_IsStrict(t *testing.T) {
 	defer tx.Rollback()
 
 	// ID を16バイトの BLOB ではなく文字列で入れると, STRICT が断る.
-	_, err = tx.Exec("INSERT INTO items (id, kind, head) VALUES (?, 'asset', ?)", "0190a0b0-c0d0-7000-8000-000000000001", uuid(2))
+	_, err = tx.Exec("INSERT INTO items (id, kind, head) VALUES (?, 'asset', ?)", "0190a0b0-c0d0-7000-8000-000000000001", testID(2))
 	if err == nil || !strings.Contains(err.Error(), "cannot store") {
 		t.Errorf("BLOB の列に文字列を入れた時の error = %v, want cannot store", err)
 	}
@@ -286,7 +286,7 @@ func TestSchema_IsStrict(t *testing.T) {
 func TestSchema_ForeignKeysAreEnforced(t *testing.T) {
 	s, _ := openTestStore(t)
 	// revision_parents の外部キーは延期しないので, 無い revision を指すとこの文で失敗する.
-	_, err := s.write.Exec("INSERT INTO revision_parents (revision_id, parent_id) VALUES (?, ?)", uuid(1), uuid(2))
+	_, err := s.write.Exec("INSERT INTO revision_parents (revision_id, parent_id) VALUES (?, ?)", testID(1), testID(2))
 	if err == nil || !strings.Contains(err.Error(), "FOREIGN KEY") {
 		t.Errorf("無い revision を指した時の error = %v, want FOREIGN KEY", err)
 	}
@@ -301,7 +301,7 @@ func TestSchema_DeferredForeignKeysAreCheckedAtCommit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BeginTx() error = %v, want nil", err)
 	}
-	if _, err := tx.Exec("INSERT INTO items (id, kind, head) VALUES (?, 'asset', ?)", uuid(1), uuid(2)); err != nil {
+	if _, err := tx.Exec("INSERT INTO items (id, kind, head) VALUES (?, 'asset', ?)", testID(1), testID(2)); err != nil {
 		t.Fatalf("延期される INSERT の error = %v, want nil", err)
 	}
 	if err := tx.Commit(); err == nil || !strings.Contains(err.Error(), "FOREIGN KEY") {
@@ -314,10 +314,10 @@ func TestSchema_DeferredForeignKeysAreCheckedAtCommit(t *testing.T) {
 		t.Fatalf("BeginTx() error = %v, want nil", err)
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec("INSERT INTO items (id, kind, head) VALUES (?, 'asset', ?)", uuid(1), uuid(2)); err != nil {
+	if _, err := tx.Exec("INSERT INTO items (id, kind, head) VALUES (?, 'asset', ?)", testID(1), testID(2)); err != nil {
 		t.Fatalf("INSERT items error = %v, want nil", err)
 	}
-	if _, err := tx.Exec("INSERT INTO revisions (id, item_id) VALUES (?, ?)", uuid(2), uuid(1)); err != nil {
+	if _, err := tx.Exec("INSERT INTO revisions (id, item_id) VALUES (?, ?)", testID(2), testID(1)); err != nil {
 		t.Fatalf("INSERT revisions error = %v, want nil", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -339,15 +339,15 @@ func inTx(t *testing.T, s *Store, f func(tx *sql.Tx) error) error {
 	return tx.Commit()
 }
 
-// insertItem は, head だけを持つ item と, その head の revision (中身あり) を入れる.
-func insertItem(tx *sql.Tx, item, head []byte) error {
+// insertTestItem は, head だけを持つ item と, その head の revision (中身あり) を入れる.
+func insertTestItem(tx *sql.Tx, item, head []byte) error {
 	if _, err := tx.Exec("INSERT INTO items (id, kind, head) VALUES (?, 'asset', ?)", item, head); err != nil {
 		return err
 	}
-	return insertRevision(tx, head, item)
+	return insertTestRevision(tx, head, item)
 }
 
-func insertRevision(tx *sql.Tx, id, item []byte) error {
+func insertTestRevision(tx *sql.Tx, id, item []byte) error {
 	_, err := tx.Exec(`INSERT INTO revisions (id, item_id, created_at, author_user, author_machine, blob_sha256, body)
 		VALUES (?, ?, 1700000000000, 'user', 'machine', ?, x'00')`, id, item, make([]byte, 32))
 	return err
@@ -356,17 +356,17 @@ func insertRevision(tx *sql.Tx, id, item []byte) error {
 func TestSchema_RejectsWrongLengthIDs(t *testing.T) {
 	s, _ := openTestStore(t)
 
-	err := inTx(t, s, func(tx *sql.Tx) error { return insertItem(tx, make([]byte, 17), uuid(2)) })
+	err := inTx(t, s, func(tx *sql.Tx) error { return insertTestItem(tx, make([]byte, 17), testID(2)) })
 	if err == nil || !strings.Contains(err.Error(), "CHECK") {
 		t.Errorf("17バイトの ID の error = %v, want CHECK", err)
 	}
 
 	err = inTx(t, s, func(tx *sql.Tx) error {
-		if _, err := tx.Exec("INSERT INTO items (id, kind, head) VALUES (?, 'asset', ?)", uuid(1), uuid(2)); err != nil {
+		if _, err := tx.Exec("INSERT INTO items (id, kind, head) VALUES (?, 'asset', ?)", testID(1), testID(2)); err != nil {
 			return err
 		}
 		_, err := tx.Exec(`INSERT INTO revisions (id, item_id, created_at, author_user, author_machine, blob_sha256, body)
-			VALUES (?, ?, 0, 'user', 'machine', ?, x'00')`, uuid(2), uuid(1), make([]byte, 31))
+			VALUES (?, ?, 0, 'user', 'machine', ?, x'00')`, testID(2), testID(1), make([]byte, 31))
 		return err
 	})
 	if err == nil || !strings.Contains(err.Error(), "CHECK") {
@@ -376,13 +376,13 @@ func TestSchema_RejectsWrongLengthIDs(t *testing.T) {
 
 func TestSchema_HeadMustBelongToItsItem(t *testing.T) {
 	s, _ := openTestStore(t)
-	itemA, headA, itemB, headB := uuid(1), uuid(2), uuid(3), uuid(4)
+	itemA, headA, itemB, headB := testID(1), testID(2), testID(3), testID(4)
 
 	if err := inTx(t, s, func(tx *sql.Tx) error {
-		if err := insertItem(tx, itemA, headA); err != nil {
+		if err := insertTestItem(tx, itemA, headA); err != nil {
 			return err
 		}
-		return insertItem(tx, itemB, headB)
+		return insertTestItem(tx, itemB, headB)
 	}); err != nil {
 		t.Fatalf("2つの item を入れる error = %v, want nil", err)
 	}
@@ -399,14 +399,14 @@ func TestSchema_HeadMustBelongToItsItem(t *testing.T) {
 
 func TestSchema_ParentMayBelongToAnotherItem(t *testing.T) {
 	s, _ := openTestStore(t)
-	itemA, headA, itemB, headB, merged := uuid(1), uuid(2), uuid(3), uuid(4), uuid(5)
+	itemA, headA, itemB, headB, merged := testID(1), testID(2), testID(3), testID(4), testID(5)
 
 	// item の統合: B の新しい revision が, A と B の両方の head を親に持つ.
 	err := inTx(t, s, func(tx *sql.Tx) error {
 		for _, f := range []func() error{
-			func() error { return insertItem(tx, itemA, headA) },
-			func() error { return insertItem(tx, itemB, headB) },
-			func() error { return insertRevision(tx, merged, itemB) },
+			func() error { return insertTestItem(tx, itemA, headA) },
+			func() error { return insertTestItem(tx, itemB, headB) },
+			func() error { return insertTestRevision(tx, merged, itemB) },
 			func() error {
 				_, err := tx.Exec("INSERT INTO revision_parents VALUES (?, ?), (?, ?)", merged, headA, merged, headB)
 				return err
@@ -441,11 +441,11 @@ func TestSchema_LiveRevisionMustBeComplete(t *testing.T) {
 
 	insert := func(created, user, machine, sha, body any) error {
 		return inTx(t, s, func(tx *sql.Tx) error {
-			if _, err := tx.Exec("INSERT INTO items (id, kind, head) VALUES (?, 'asset', ?)", uuid(1), uuid(2)); err != nil {
+			if _, err := tx.Exec("INSERT INTO items (id, kind, head) VALUES (?, 'asset', ?)", testID(1), testID(2)); err != nil {
 				return err
 			}
 			_, err := tx.Exec(`INSERT INTO revisions (id, item_id, created_at, author_user, author_machine, blob_sha256, body)
-				VALUES (?, ?, ?, ?, ?, ?, ?)`, uuid(2), uuid(1), created, user, machine, sha, body)
+				VALUES (?, ?, ?, ?, ?, ?, ?)`, testID(2), testID(1), created, user, machine, sha, body)
 			return err
 		})
 	}
