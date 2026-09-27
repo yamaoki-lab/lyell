@@ -8,10 +8,13 @@ import (
 	"path/filepath"
 )
 
-// LocalStore は, Store をローカルディスク上のファイルとして実装する.
+// LocalStore は, Backend をローカルディスク上のファイルとして実装する.
 type LocalStore struct {
 	root string
 }
+
+// LocalStore が Backend を満たさなくなったら, ここでコンパイルエラーになる.
+var _ Backend = (*LocalStore)(nil)
 
 // NewLocalStore は, root の下に内容を置く LocalStore を返す.
 func NewLocalStore(root string) *LocalStore {
