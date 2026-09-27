@@ -3,65 +3,72 @@ package itemstore
 import (
 	"context"
 	"database/sql"
+	"embed"
 	"fmt"
+	"io/fs"
+	"sort"
 	"time"
 )
 
 // migration は, schema version を1つ上げる. 渡されたトランザクションの中だけで変更する.
 type migration func(ctx context.Context, tx *sql.Tx) error
 
+// schemaFiles は, schema version ごとの SQL. schema/0001.sql が schema version 1 で, 番号の順に適用する. 表の決まりの理由は, 各ファイルの中にコメントで書いてある.
+//
+//go:embed schema/*.sql
+var schemaFiles embed.FS
+
+// goMigrations は, SQL だけでは書けない変更 (データの移し替え等) のための Go の関数. 番号は schema version で, その番号の SQL のファイルの後に, 同じトランザクションの中で実行する. Go だけで済む変更でも, 番号を取るために SQL のファイル (コメントだけでよい) を置く. 今は無い.
+var goMigrations = map[int]migration{}
+
 // migrations の i 番目 (0 始まり) は, schema version i を i+1 へ上げる. schema version は DB のファイルの user_version に入る. // yamaoki-lint:ignore
 //
-// 一度公開した関数は書き換えない. 既に上げ終えた DB には二度と適用されないので, 書き換えると, 新しく作った DB と上げてきた DB で形が食い違う. 変更は, 新しい関数を末尾に足して行う.
-var migrations = []migration{
-	migrateTo1,
+// 一度公開したファイルや関数は書き換えない. 既に上げ終えた DB には二度と適用されないので, 書き換えると, 新しく作った DB と上げてきた DB で形が食い違う. 変更は, 次の番号で足して行う.
+var migrations = mustLoadMigrations(schemaFiles, goMigrations)
+
+func mustLoadMigrations(files fs.FS, goFuncs map[int]migration) []migration {
+	ms, err := loadMigrations(files, goFuncs)
+	if err != nil {
+		panic(err)
+	}
+	return ms
 }
 
-// migrateTo1 は, item と revision の3つの表を作る (nk-a-79/hozonnyou#119).
-//
-// STRICT は, 列の型へ失わずに変換できない値を入れた時にエラーにする (例: BLOB の列に TEXT. 逆に TEXT の列の 123 は '123' に変換されて通る). 付けないと, SQLite は型を目安としてしか扱わず, 例えば ID を BLOB と TEXT で入れた行が混ざっても気付けない. 同じ ID なのに型が違うと一致しないので, "あるはずの行が見つからない" という形でしか表に出ない.
-//
-// STRICT は BLOB であることしか見ないので, ID は16バイト (UUIDv7), blob_sha256 は32バイトであることを CHECK で確かめる. 16進の文字列をそのままバイト列にして渡した, といった誤りを断る. 主キーには NOT NULL も付ける. SQLite は古い互換のため, 行番号を持つ表の主キーに NULL を許してしまう.
-//
-// items.head と revisions.item_id は互いを指すので, どちらを先に入れても1文ごとの検査では違反になる. そこで検査をコミットの時にまとめる (DEFERRABLE INITIALLY DEFERRED). head は (id, head) の組で revisions の (item_id, id) を指し, 別の item の revision を head にすると断る. revision_parents の親は別の item の revision でもよい (item の統合で, 両方の head を親に持つ revision ができる). 親は必ず先にあるので, 延期しない. 指されている行を消した時の動きは既定 (消せない) のままにする. 連鎖して消す (CASCADE) と, 誤って消した時に祖先の繋がりが黙って失われる.
-//
-// revisions の中身の4列と body は, 間引くと NULL になり, ID と親だけの骨格が残る. body があれば (間引かれていなければ) 他の4列も必ずある, という片向きの CHECK にする. 間引いた後にどの列を残すかは, 後から変えても表を作り直さずに済む. blob_sha256 は blob への参照で, バイト列を手元に持っているか (転送から外した等) とは別. 持っているかは記録せず, blobstore に都度聞く.
-//
-// 1行が小さい items と revision_parents は WITHOUT ROWID にし, 表そのものを主キーの順に持つ. 行番号と主キーの索引を二重に持たずに済み, 1回で引ける. body が数 KB になりうる revisions は, 行が大きいと遅くなるので付けない.
-//
-// 索引は, 外部キーの子の側の列に付ける. 無いと, revision を1つ消すたびに "どこかから指されていないか" の検査が表を全部読む. revisions の item_id は UNIQUE (item_id, id) が兼ねる.
-func migrateTo1(ctx context.Context, tx *sql.Tx) error {
-	_, err := tx.ExecContext(ctx, `
-CREATE TABLE items (
-  id   BLOB NOT NULL PRIMARY KEY CHECK (length(id) = 16),  -- UUIDv7
-  kind TEXT NOT NULL,                                       -- asset / collection. 作成後に変わらない
-  head BLOB NOT NULL CHECK (length(head) = 16),
-  FOREIGN KEY (id, head) REFERENCES revisions (item_id, id) DEFERRABLE INITIALLY DEFERRED
-) STRICT, WITHOUT ROWID;
+// loadMigrations は, schema/NNNN.sql を番号の順に並べ, 1つずつの migration にする. 番号は1からの連番でなければならない. 飛びや重なりがあると, ある schema version が黙って抜けるので, エラーにする.
+func loadMigrations(files fs.FS, goFuncs map[int]migration) ([]migration, error) {
+	names, err := fs.Glob(files, "schema/*.sql")
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(names)
 
-CREATE INDEX items_head ON items (head);
-
-CREATE TABLE revisions (
-  id             BLOB NOT NULL PRIMARY KEY CHECK (length(id) = 16),  -- UUIDv7
-  item_id        BLOB NOT NULL REFERENCES items (id) DEFERRABLE INITIALLY DEFERRED CHECK (length(item_id) = 16),
-  created_at     INTEGER,  -- 記録した時刻. Unix ミリ秒 (UTC). 中身が表す本来の日時は body の側
-  author_user    TEXT,     -- 記録した利用者
-  author_machine TEXT,     -- 記録した機体
-  blob_sha256    BLOB CHECK (length(blob_sha256) = 32),
-  body           BLOB,     -- Protobuf. これが正で, 上の4列は body から計算し直せる
-  UNIQUE (item_id, id),
-  CHECK (body IS NULL OR (created_at IS NOT NULL AND author_user IS NOT NULL AND author_machine IS NOT NULL AND blob_sha256 IS NOT NULL))
-) STRICT;
-
-CREATE TABLE revision_parents (
-  revision_id BLOB NOT NULL REFERENCES revisions (id) CHECK (length(revision_id) = 16),
-  parent_id   BLOB NOT NULL REFERENCES revisions (id) CHECK (length(parent_id) = 16),
-  PRIMARY KEY (revision_id, parent_id)
-) STRICT, WITHOUT ROWID;
-
-CREATE INDEX revision_parents_parent_id ON revision_parents (parent_id);
-`)
-	return err
+	var ms []migration
+	for i, name := range names {
+		schemaVersion := i + 1
+		if want := fmt.Sprintf("schema/%04d.sql", schemaVersion); name != want {
+			return nil, fmt.Errorf("schema version %d のファイルは %s のはずだが, %s がある. 番号は1からの連番にする", schemaVersion, want, name)
+		}
+		sqlText, err := fs.ReadFile(files, name)
+		if err != nil {
+			return nil, err
+		}
+		goFunc := goFuncs[schemaVersion]
+		ms = append(ms, func(ctx context.Context, tx *sql.Tx) error {
+			if _, err := tx.ExecContext(ctx, string(sqlText)); err != nil {
+				return fmt.Errorf("%s: %w", name, err)
+			}
+			if goFunc != nil {
+				return goFunc(ctx, tx)
+			}
+			return nil
+		})
+	}
+	for schemaVersion := range goFuncs {
+		if schemaVersion < 1 || schemaVersion > len(ms) {
+			return nil, fmt.Errorf("schema version %d の Go の関数に, 対応する SQL のファイルが無い", schemaVersion)
+		}
+	}
+	return ms, nil
 }
 
 // migrate は, DB を ms の最新の schema version まで上げる. schema version ごとに1つのトランザクションで適用するので, 途中で失敗しても, 失敗した schema version の変更だけが取り消される.
