@@ -24,6 +24,7 @@ type Backend interface {
 // Store は, Backend を包み, 書く中身が名前の SHA-256 と合うかを確かめる.
 type Store struct {
 	backend Backend
+	locks   sumLocks
 }
 
 // New は, backend を包んだ Store を返す.
@@ -44,16 +45,26 @@ func (e *MismatchError) Error() string {
 // Put は, data を sum の blob として書き込む. data の SHA-256 が sum と合わなければ, 何も置かずに *MismatchError を返す.
 //
 // sum の blob が既にある時も, 渡した側の計算を信じずに data を最後まで読んで確かめる. 確かめずに成功を返すと, 名前を取り違えた中身が保存されないまま, 保存できたと思われてしまうため. この時はディスクに書かない. 転送そのものを省きたい時は, 先に Exists で確かめる.
+//
+// 同じ sum への Put は, 同時には書かない. 後から来た Put は先の Put が終わるのを待ち, その後は既にある時と同じく確かめるだけになる. 違う sum への Put は互いに待たない.
 func (s *Store) Put(ctx context.Context, sum Sum, data io.Reader) error {
+	unlock, err := s.locks.lock(ctx, sum)
+	if err != nil {
+		return err
+	}
 	ok, err := s.backend.Exists(ctx, sum)
 	if err != nil {
+		unlock()
 		return err
 	}
 	v := &verifyingReader{r: data, h: sha256.New(), want: sum}
 	if ok {
+		// 書かないので, 確かめる間は他の Put を待たせない.
+		unlock()
 		_, err := io.Copy(io.Discard, v)
 		return err
 	}
+	defer unlock()
 	return s.backend.Put(ctx, sum, v)
 }
 
