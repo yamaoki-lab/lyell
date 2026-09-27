@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/google/uuid"
@@ -53,7 +54,7 @@ type Content struct {
 	// AuthorUser と AuthorMachine は, 記録した利用者と機体. どちらも必ず入れる. 認証の無い経路からの記録は, 両方 "anonymous" にする.
 	AuthorUser    string
 	AuthorMachine string
-	// Blob は, 中身のバイト列 (blob) の SHA-256. バイト列を手元に持っているかとは別で, 持っているかは blobstore に聞く.
+	// Blob は, 中身のバイト列 (blob) の SHA-256. 記録した後は, バイト列を手元に持っているか (転送から外した等) とは別になる. 持っているかは blobstore に聞く.
 	Blob blobstore.Sum
 	// Body は, revision の情報 (名前, メモ, content profile 等) を Protobuf で表したもの. itemstore は中身を解釈せず, 受け取ったバイト列をそのまま持つ. 空の Protobuf のメッセージは0バイトになるので, 空でもよい.
 	Body []byte
@@ -71,15 +72,18 @@ type Revision struct {
 // ErrNotFound は, 指定した item や revision が無い時のエラー.
 var ErrNotFound = errors.New("itemstore: 見つからない")
 
-// CreateItem は, kind の item を, content を中身に持つ最初の revision と一緒に作る. item と revision は1つのトランザクションで記録するので, 片方だけが残ることは無い.
+// CreateItem は, kind の item を, content を中身に持つ最初の revision と一緒に作る. data は中身のバイト列 (blob) で, SHA-256 が content.Blob と合わなければ何も記録しない.
 //
-// content.Blob の blob は, 先に blobstore へ書いておく. ここでは blob を確かめない.
-func (s *Store) CreateItem(ctx context.Context, kind Kind, content Content) (Item, error) {
+// blob を先に書き (書き終えるとディスクに届いている), その後で item と revision を1つのトランザクションで記録する. 逆の順にすると, 記録した後に落ちた時に, 無い blob を指す revision が残る. この順なら, 途中で落ちても孤立した blob が残るだけで, 後の GC で回収できる.
+func (s *Store) CreateItem(ctx context.Context, kind Kind, content Content, data io.Reader) (Item, error) {
 	if err := kind.validate(); err != nil {
 		return Item{}, err
 	}
 	if err := content.validate(); err != nil {
 		return Item{}, err
+	}
+	if err := s.blobs.Put(ctx, content.Blob, data); err != nil {
+		return Item{}, fmt.Errorf("blob を書けない: %w", err)
 	}
 	itemID, err := NewID()
 	if err != nil {

@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -47,7 +48,7 @@ func TestCreateItem_ThenRead(t *testing.T) {
 	ctx := context.Background()
 	content := testContent("body")
 
-	item, err := s.CreateItem(ctx, KindAsset, content)
+	item, err := s.CreateItem(ctx, KindAsset, content, bytes.NewReader(content.Body))
 	if err != nil {
 		t.Fatalf("CreateItem() error = %v, want nil", err)
 	}
@@ -89,7 +90,7 @@ func TestCreateItem_EmptyBodyIsNotThinned(t *testing.T) {
 	for _, body := range [][]byte{nil, {}} {
 		content := testContent("")
 		content.Body = body
-		item, err := s.CreateItem(ctx, KindAsset, content)
+		item, err := s.CreateItem(ctx, KindAsset, content, bytes.NewReader(content.Body))
 		if err != nil {
 			t.Fatalf("CreateItem() error = %v, want nil", err)
 		}
@@ -132,7 +133,7 @@ func TestCreateItem_RejectsInvalidInputWithoutWriting(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if _, err := s.CreateItem(ctx, tt.kind, tt.content); err == nil {
+			if _, err := s.CreateItem(ctx, tt.kind, tt.content, bytes.NewReader(tt.content.Body)); err == nil {
 				t.Errorf("CreateItem() error = nil, want error")
 			}
 		})
@@ -163,7 +164,7 @@ func TestRevision_ParentsSurviveThinning(t *testing.T) {
 	s, _ := openTestStore(t)
 	ctx := context.Background()
 
-	item, err := s.CreateItem(ctx, KindAsset, testContent("r1"))
+	item, err := s.CreateItem(ctx, KindAsset, testContent("r1"), strings.NewReader("r1"))
 	if err != nil {
 		t.Fatalf("CreateItem() error = %v, want nil", err)
 	}

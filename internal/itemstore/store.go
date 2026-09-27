@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
+
+	"github.com/yamaoki-lab/lyell/internal/blobstore"
 )
 
 // Store は, 1つの DB のファイルを開いたもの.
@@ -15,17 +17,18 @@ import (
 type Store struct {
 	write *sql.DB // 書き込み用. 接続は1本だけ
 	read  *sql.DB // 読み取り用. 書き込むとエラーになる
+	blobs *blobstore.Store
 }
 
 // minSQLiteVersion は, 使う機能が揃う SQLite のバージョン. STRICT が 3.37.0 から, VACUUM INTO が 3.27.0 から.
 var minSQLiteVersion = [3]int{3, 37, 0}
 
-// Open は, path の DB を開く. 無ければ作る. schema version が古ければ, 最新の schema version まで上げる.
-func Open(ctx context.Context, path string) (*Store, error) {
-	return open(ctx, path, migrations)
+// Open は, path の DB を開く. 無ければ作る. schema version が古ければ, 最新の schema version まで上げる. revision の中身のバイト列 (blob) は blobs に置く.
+func Open(ctx context.Context, path string, blobs *blobstore.Store) (*Store, error) {
+	return open(ctx, path, blobs, migrations)
 }
 
-func open(ctx context.Context, path string, ms []migration) (*Store, error) {
+func open(ctx context.Context, path string, blobs *blobstore.Store, ms []migration) (*Store, error) {
 	writeDSN, err := dsn(path, writeConn)
 	if err != nil {
 		return nil, err
@@ -63,7 +66,7 @@ func open(ctx context.Context, path string, ms []migration) (*Store, error) {
 		return nil, err
 	}
 
-	return &Store{write: write, read: read}, nil
+	return &Store{write: write, read: read, blobs: blobs}, nil
 }
 
 // Close は, DB を閉じる.

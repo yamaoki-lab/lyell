@@ -7,12 +7,19 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/yamaoki-lab/lyell/internal/blobstore"
 )
+
+func newTestBlobs(t *testing.T) *blobstore.Store {
+	t.Helper()
+	return blobstore.New(blobstore.NewLocalStore(t.TempDir()))
+}
 
 func openTestStore(t *testing.T) (*Store, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "lyell.db")
-	s, err := Open(context.Background(), path)
+	s, err := Open(context.Background(), path, newTestBlobs(t))
 	if err != nil {
 		t.Fatalf("Open() error = %v, want nil", err)
 	}
@@ -132,7 +139,7 @@ func TestOpen_AppliesSchemaOnceAndWithoutBackupWhenNew(t *testing.T) {
 	s.Close()
 
 	// 開き直しても, schema version はそのままで, 複製も作らない.
-	s2, err := Open(context.Background(), path)
+	s2, err := Open(context.Background(), path, newTestBlobs(t))
 	if err != nil {
 		t.Fatalf("2回目の Open() error = %v, want nil", err)
 	}
@@ -152,7 +159,7 @@ func TestOpen_RejectsNewerSchema(t *testing.T) {
 	}
 	s.Close()
 
-	if s2, err := Open(context.Background(), path); err == nil {
+	if s2, err := Open(context.Background(), path, newTestBlobs(t)); err == nil {
 		s2.Close()
 		t.Fatalf("新しい schema version の DB を開けた, want error")
 	}
@@ -169,7 +176,7 @@ func TestOpen_RejectsForeignDatabase(t *testing.T) {
 	}
 	db.Close()
 
-	if s, err := Open(context.Background(), path); err == nil {
+	if s, err := Open(context.Background(), path, newTestBlobs(t)); err == nil {
 		s.Close()
 		t.Fatalf("Lyell のものではない DB を開けた, want error")
 	}
@@ -177,7 +184,7 @@ func TestOpen_RejectsForeignDatabase(t *testing.T) {
 
 func TestOpen_RejectsQuestionMarkInPath(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "a?b.db")
-	if s, err := Open(context.Background(), path); err == nil {
+	if s, err := Open(context.Background(), path, newTestBlobs(t)); err == nil {
 		s.Close()
 		t.Fatalf("\"?\" を含むパスで開けた, want error")
 	}
@@ -194,14 +201,14 @@ func TestMigrate_UpgradeBacksUpFirst(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "lyell.db")
 	ctx := context.Background()
 
-	s, err := open(ctx, path, migrations)
+	s, err := open(ctx, path, newTestBlobs(t), migrations)
 	if err != nil {
 		t.Fatalf("open() error = %v, want nil", err)
 	}
 	s.Close()
 
 	next := append(append([]migration{}, migrations...), createTable("added"))
-	s, err = open(ctx, path, next)
+	s, err = open(ctx, path, newTestBlobs(t), next)
 	if err != nil {
 		t.Fatalf("schema version を上げる open() error = %v, want nil", err)
 	}
@@ -227,7 +234,7 @@ func TestMigrate_FailedStepIsRolledBack(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "lyell.db")
 	ctx := context.Background()
 
-	s, err := open(ctx, path, migrations)
+	s, err := open(ctx, path, newTestBlobs(t), migrations)
 	if err != nil {
 		t.Fatalf("open() error = %v, want nil", err)
 	}
@@ -240,7 +247,7 @@ func TestMigrate_FailedStepIsRolledBack(t *testing.T) {
 		return errors.New("途中で失敗した")
 	}
 	next := append(append([]migration{}, migrations...), failing)
-	if s, err := open(ctx, path, next); err == nil {
+	if s, err := open(ctx, path, newTestBlobs(t), next); err == nil {
 		s.Close()
 		t.Fatalf("失敗する schema version で open() error = nil, want error")
 	}
@@ -248,7 +255,7 @@ func TestMigrate_FailedStepIsRolledBack(t *testing.T) {
 	if got := userVersion(t, path); got != len(migrations) {
 		t.Errorf("DB の schema version = %d, want 失敗する前の %d", got, len(migrations))
 	}
-	s, err = open(ctx, path, migrations)
+	s, err = open(ctx, path, newTestBlobs(t), migrations)
 	if err != nil {
 		t.Fatalf("開き直す open() error = %v, want nil", err)
 	}
