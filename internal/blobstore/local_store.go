@@ -21,8 +21,8 @@ func NewLocalStore(root string) *LocalStore {
 // Put は, 同じファイルシステムの上の一時的な置き場 (root/.tmp/) に data を書き, 書き終えてから rename で最終的なパスへ移す. rename は同じファイルシステムの中でだけ不可分なので, システムの一時ディレクトリ (os.TempDir) は使わない.
 //
 // Put が nil を返した時には, 内容とパスがディスクに届いている. 呼び出し側は, この後に DB へ記録してよい. そのために, rename の前にファイルを fsync し, rename の後に置き先のディレクトリを fsync する. 新しく作ったディレクトリも, その親を fsync する.
-func (s *LocalStore) Put(_ context.Context, key string, data io.Reader) error {
-	finalPath := s.path(key)
+func (s *LocalStore) Put(_ context.Context, sum Sum, data io.Reader) error {
+	finalPath := s.path(sum)
 	if err := mkdirAllDurable(filepath.Dir(finalPath)); err != nil {
 		return err
 	}
@@ -58,14 +58,14 @@ func (s *LocalStore) Put(_ context.Context, key string, data io.Reader) error {
 	return syncDir(filepath.Dir(finalPath))
 }
 
-// Open は, keyの内容を読み取るReadCloserを返す.
-func (s *LocalStore) Open(_ context.Context, key string) (io.ReadCloser, error) {
-	return os.Open(s.path(key))
+// Open は, sum の blob を読み取る ReadCloser を返す.
+func (s *LocalStore) Open(_ context.Context, sum Sum) (io.ReadCloser, error) {
+	return os.Open(s.path(sum))
 }
 
-// Exists は, keyの内容が既に存在するかを報告する.
-func (s *LocalStore) Exists(_ context.Context, key string) (bool, error) {
-	_, err := os.Stat(s.path(key))
+// Exists は, sum の blob が既にあるかを報告する.
+func (s *LocalStore) Exists(_ context.Context, sum Sum) (bool, error) {
+	_, err := os.Stat(s.path(sum))
 	if err == nil {
 		return true, nil
 	}
@@ -75,8 +75,10 @@ func (s *LocalStore) Exists(_ context.Context, key string) (bool, error) {
 	return false, err
 }
 
-func (s *LocalStore) path(key string) string {
-	return filepath.Join(s.root, filepath.FromSlash(key))
+// path は, sum の blob のパスを root/sha256/<1〜2文字目>/<3〜4文字目>/<64文字全体> にする (Git LFS と同じ形). 2文字ずつ2段に分けるので, blob が約6700万件になるまで, 1つのディレクトリの中身は1024件以下に収まる. 人がファイラやターミナルで覗いた時に, 一度に並ぶ数が多くなりすぎないようにするため. ファイル名をハッシュ全体にしているのは, 見えている名前をそのまま blob の名前として使えるようにするため. "sha256" の段は, 将来ハッシュの方式を変えた時に並べて置けるようにするため.
+func (s *LocalStore) path(sum Sum) string {
+	h := sum.String()
+	return filepath.Join(s.root, "sha256", h[0:2], h[2:4], h)
 }
 
 // mkdirAllDurable は, os.MkdirAll と同じく dir までのディレクトリを作る. 違いは, 新しく作ったディレクトリごとに親を fsync すること. これをしないと, 停電の後にディレクトリごと消え, その下に fsync したファイルも一緒に失われうる.
