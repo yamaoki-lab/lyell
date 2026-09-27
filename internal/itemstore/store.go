@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"runtime"
 
 	"github.com/yamaoki-lab/lyell/internal/blobstore"
@@ -18,17 +19,40 @@ type Store struct {
 	write *sql.DB // 書き込み用. 接続は1本だけ
 	read  *sql.DB // 読み取り用. 書き込むとエラーになる
 	blobs *blobstore.Store
+	log   *slog.Logger
+}
+
+// Config は, Open に渡す設定. 項目を足しても呼び出し側を直さずに済むよう, 引数を並べずにこの形で受け取る. 書かなかった項目は空の値になる.
+type Config struct {
+	// Path は DB のファイル. 無ければ作る.
+	Path string
+	// Blobs は, revision の中身のバイト列 (blob) の置き場.
+	Blobs *blobstore.Store
+	// Logger は, 後から調べられるよう大事な出来事 (schema version を上げた等) を書く先. どこに出すかは組み立てる側が決める. nil なら書かない.
+	Logger *slog.Logger
 }
 
 // minSQLiteVersion は, 使う機能が揃う SQLite のバージョン. STRICT が 3.37.0 から, VACUUM INTO が 3.27.0 から.
 var minSQLiteVersion = [3]int{3, 37, 0}
 
-// Open は, path の DB を開く. 無ければ作る. schema version が古ければ, 最新の schema version まで上げる. revision の中身のバイト列 (blob) は blobs に置く.
-func Open(ctx context.Context, path string, blobs *blobstore.Store) (*Store, error) {
-	return open(ctx, path, blobs, migrations)
+// Open は, DB を開く. schema version が古ければ, 最新の schema version まで上げる.
+func Open(ctx context.Context, cfg Config) (*Store, error) {
+	return open(ctx, cfg, migrations)
 }
 
-func open(ctx context.Context, path string, blobs *blobstore.Store, ms []migration) (*Store, error) {
+func open(ctx context.Context, cfg Config, ms []migration) (*Store, error) {
+	if cfg.Path == "" {
+		return nil, errors.New("DB のファイル (Path) が無い")
+	}
+	if cfg.Blobs == nil {
+		return nil, errors.New("blob の置き場 (Blobs) が無い")
+	}
+	log := cfg.Logger
+	if log == nil {
+		log = slog.New(slog.DiscardHandler)
+	}
+	path := cfg.Path
+
 	writeDSN, err := dsn(path, writeConn)
 	if err != nil {
 		return nil, err
@@ -43,7 +67,7 @@ func open(ctx context.Context, path string, blobs *blobstore.Store, ms []migrati
 		write.Close()
 		return nil, err
 	}
-	if err := migrate(ctx, write, path, ms); err != nil {
+	if err := migrate(ctx, write, path, ms, log); err != nil {
 		write.Close()
 		return nil, err
 	}
@@ -66,7 +90,7 @@ func open(ctx context.Context, path string, blobs *blobstore.Store, ms []migrati
 		return nil, err
 	}
 
-	return &Store{write: write, read: read, blobs: blobs}, nil
+	return &Store{write: write, read: read, blobs: cfg.Blobs, log: log}, nil
 }
 
 // Close は, DB を閉じる.

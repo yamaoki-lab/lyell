@@ -1,9 +1,12 @@
 package itemstore
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -19,7 +22,7 @@ func newTestBlobs(t *testing.T) *blobstore.Store {
 func openTestStore(t *testing.T) (*Store, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "lyell.db")
-	s, err := Open(context.Background(), path, newTestBlobs(t))
+	s, err := Open(context.Background(), Config{Path: path, Blobs: newTestBlobs(t)})
 	if err != nil {
 		t.Fatalf("Open() error = %v, want nil", err)
 	}
@@ -139,7 +142,7 @@ func TestOpen_AppliesSchemaOnceAndWithoutBackupWhenNew(t *testing.T) {
 	s.Close()
 
 	// 開き直しても, schema version はそのままで, 複製も作らない.
-	s2, err := Open(context.Background(), path, newTestBlobs(t))
+	s2, err := Open(context.Background(), Config{Path: path, Blobs: newTestBlobs(t)})
 	if err != nil {
 		t.Fatalf("2回目の Open() error = %v, want nil", err)
 	}
@@ -159,7 +162,7 @@ func TestOpen_RejectsNewerSchema(t *testing.T) {
 	}
 	s.Close()
 
-	if s2, err := Open(context.Background(), path, newTestBlobs(t)); err == nil {
+	if s2, err := Open(context.Background(), Config{Path: path, Blobs: newTestBlobs(t)}); err == nil {
 		s2.Close()
 		t.Fatalf("新しい schema version の DB を開けた, want error")
 	}
@@ -176,7 +179,7 @@ func TestOpen_RejectsForeignDatabase(t *testing.T) {
 	}
 	db.Close()
 
-	if s, err := Open(context.Background(), path, newTestBlobs(t)); err == nil {
+	if s, err := Open(context.Background(), Config{Path: path, Blobs: newTestBlobs(t)}); err == nil {
 		s.Close()
 		t.Fatalf("Lyell のものではない DB を開けた, want error")
 	}
@@ -184,7 +187,7 @@ func TestOpen_RejectsForeignDatabase(t *testing.T) {
 
 func TestOpen_RejectsQuestionMarkInPath(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "a?b.db")
-	if s, err := Open(context.Background(), path, newTestBlobs(t)); err == nil {
+	if s, err := Open(context.Background(), Config{Path: path, Blobs: newTestBlobs(t)}); err == nil {
 		s.Close()
 		t.Fatalf("\"?\" を含むパスで開けた, want error")
 	}
@@ -201,14 +204,14 @@ func TestMigrate_UpgradeBacksUpFirst(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "lyell.db")
 	ctx := context.Background()
 
-	s, err := open(ctx, path, newTestBlobs(t), migrations)
+	s, err := open(ctx, Config{Path: path, Blobs: newTestBlobs(t)}, migrations)
 	if err != nil {
 		t.Fatalf("open() error = %v, want nil", err)
 	}
 	s.Close()
 
 	next := append(append([]migration{}, migrations...), createTable("added"))
-	s, err = open(ctx, path, newTestBlobs(t), next)
+	s, err = open(ctx, Config{Path: path, Blobs: newTestBlobs(t)}, next)
 	if err != nil {
 		t.Fatalf("schema version を上げる open() error = %v, want nil", err)
 	}
@@ -234,7 +237,7 @@ func TestMigrate_FailedStepIsRolledBack(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "lyell.db")
 	ctx := context.Background()
 
-	s, err := open(ctx, path, newTestBlobs(t), migrations)
+	s, err := open(ctx, Config{Path: path, Blobs: newTestBlobs(t)}, migrations)
 	if err != nil {
 		t.Fatalf("open() error = %v, want nil", err)
 	}
@@ -247,7 +250,7 @@ func TestMigrate_FailedStepIsRolledBack(t *testing.T) {
 		return errors.New("途中で失敗した")
 	}
 	next := append(append([]migration{}, migrations...), failing)
-	if s, err := open(ctx, path, newTestBlobs(t), next); err == nil {
+	if s, err := open(ctx, Config{Path: path, Blobs: newTestBlobs(t)}, next); err == nil {
 		s.Close()
 		t.Fatalf("失敗する schema version で open() error = nil, want error")
 	}
@@ -255,7 +258,7 @@ func TestMigrate_FailedStepIsRolledBack(t *testing.T) {
 	if got := userVersion(t, path); got != len(migrations) {
 		t.Errorf("DB の schema version = %d, want 失敗する前の %d", got, len(migrations))
 	}
-	s, err = open(ctx, path, newTestBlobs(t), migrations)
+	s, err = open(ctx, Config{Path: path, Blobs: newTestBlobs(t)}, migrations)
 	if err != nil {
 		t.Fatalf("開き直す open() error = %v, want nil", err)
 	}
@@ -485,5 +488,90 @@ func TestSchema_Layout(t *testing.T) {
 		if err := s.read.QueryRow("SELECT name FROM sqlite_schema WHERE type = 'index' AND name = ?", index).Scan(&name); err != nil {
 			t.Errorf("索引 %s が無い: %v", index, err)
 		}
+	}
+}
+
+// logRecord は, JSON で書かれたログの1行.
+type logRecord struct {
+	Level  string `json:"level"`
+	Msg    string `json:"msg"`
+	From   int    `json:"from"`
+	To     int    `json:"to"`
+	Backup string `json:"backup"`
+}
+
+func readLog(t *testing.T, buf *bytes.Buffer) []logRecord {
+	t.Helper()
+	var recs []logRecord
+	for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+		if line == "" {
+			continue
+		}
+		var r logRecord
+		if err := json.Unmarshal([]byte(line), &r); err != nil {
+			t.Fatalf("ログの行を読めない: %v: %s", err, line)
+		}
+		recs = append(recs, r)
+	}
+	buf.Reset()
+	return recs
+}
+
+func TestMigrate_LogsUpgradesAndBackup(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lyell.db")
+	ctx := context.Background()
+	var buf bytes.Buffer
+	cfg := Config{Path: path, Blobs: newTestBlobs(t), Logger: slog.New(slog.NewJSONHandler(&buf, nil))}
+
+	// 新しい DB: 0 から 1 へ上げたことだけが残り, 複製は作らない.
+	s, err := open(ctx, cfg, migrations)
+	if err != nil {
+		t.Fatalf("open() error = %v, want nil", err)
+	}
+	s.Close()
+	recs := readLog(t, &buf)
+	if len(recs) != 1 || recs[0].Msg != "schema version を上げた" || recs[0].From != 0 || recs[0].To != 1 {
+		t.Errorf("新しい DB のログ = %+v, want 0 から 1 へ上げた1行", recs)
+	}
+
+	// 中身がある DB を上げる: 複製の場所と, 上げたことが残る.
+	next := append(append([]migration{}, migrations...), createTable("added"))
+	s, err = open(ctx, cfg, next)
+	if err != nil {
+		t.Fatalf("上げる open() error = %v, want nil", err)
+	}
+	s.Close()
+	recs = readLog(t, &buf)
+	b := backups(t, path)
+	if len(recs) != 2 || len(b) != 1 {
+		t.Fatalf("上げた時のログ = %+v, 複製 = %v, want 2行と複製1つ", recs, b)
+	}
+	if recs[0].Msg != "schema version を上げる前に DB を複製した" || recs[0].From != 1 || recs[0].Backup != b[0] {
+		t.Errorf("複製のログ = %+v, want from 1, backup %s", recs[0], b[0])
+	}
+	if recs[1].Msg != "schema version を上げた" || recs[1].From != 1 || recs[1].To != 2 {
+		t.Errorf("上げたログ = %+v, want 1 から 2", recs[1])
+	}
+
+	// 最新の DB を開き直しても, 何も書かない.
+	s, err = open(ctx, cfg, next)
+	if err != nil {
+		t.Fatalf("開き直す open() error = %v, want nil", err)
+	}
+	s.Close()
+	if recs := readLog(t, &buf); len(recs) != 0 {
+		t.Errorf("何もしない時のログ = %+v, want 無し", recs)
+	}
+}
+
+func TestOpen_RequiresPathAndBlobs(t *testing.T) {
+	ctx := context.Background()
+	if s, err := Open(ctx, Config{Blobs: newTestBlobs(t)}); err == nil {
+		s.Close()
+		t.Errorf("Path の無い Open() error = nil, want error")
+	}
+	if s, err := Open(ctx, Config{Path: filepath.Join(t.TempDir(), "lyell.db")}); err == nil {
+		s.Close()
+		t.Errorf("Blobs の無い Open() error = nil, want error")
 	}
 }

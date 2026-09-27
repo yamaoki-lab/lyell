@@ -6,6 +6,7 @@ import (
 	"embed"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"sort"
 	"time"
 )
@@ -74,7 +75,9 @@ func loadMigrations(files fs.FS, goFuncs map[int]migration) ([]migration, error)
 // migrate は, DB を ms の最新の schema version まで上げる. schema version ごとに1つのトランザクションで適用するので, 途中で失敗しても, 失敗した schema version の変更だけが取り消される.
 //
 // 既に中身がある DB を上げる時は, 先に VACUUM INTO で DB を丸ごと複製する. 失敗した適用はトランザクションが取り消すが, "成功したが中身を壊した" 適用は取り消せないので, その時は複製から戻す.
-func migrate(ctx context.Context, db *sql.DB, path string, ms []migration) error {
+//
+// schema version を上げたことと複製の場所は log に書く. 後から "いつ上がったか" "複製はどこか" を辿れるようにするため.
+func migrate(ctx context.Context, db *sql.DB, path string, ms []migration, log *slog.Logger) error {
 	var current int
 	if err := db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&current); err != nil { // yamaoki-lint:ignore
 		return err
@@ -99,12 +102,15 @@ func migrate(ctx context.Context, db *sql.DB, path string, ms []migration) error
 		if _, err := db.ExecContext(ctx, "VACUUM INTO ?", backup); err != nil {
 			return fmt.Errorf("schema version を上げる前の複製 (%s) を作れない: %w", backup, err)
 		}
+		log.Info("schema version を上げる前に DB を複製した", "path", path, "from", current, "backup", backup)
 	}
 
 	for v := current; v < len(ms); v++ {
 		if err := applyMigration(ctx, db, ms[v], v+1); err != nil {
+			log.Error("schema version を上げられなかった", "path", path, "from", v, "to", v+1, "err", err)
 			return fmt.Errorf("schema version %d へ上げられない: %w", v+1, err)
 		}
+		log.Info("schema version を上げた", "path", path, "from", v, "to", v+1)
 	}
 	return nil
 }
