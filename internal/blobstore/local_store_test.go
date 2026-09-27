@@ -102,3 +102,38 @@ func TestLocalStore_Put_FailureLeavesNoPartialFileAtFinalPath(t *testing.T) {
 		t.Errorf(".tmp配下に%d件のファイルが残っている, want 0", len(entries))
 	}
 }
+
+func TestMkdirAllDurable_CreatesNestedDirsAndIsIdempotent(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "a", "b", "c")
+
+	for i := range 2 {
+		if err := mkdirAllDurable(dir); err != nil {
+			t.Fatalf("mkdirAllDurable() (%d回目) error = %v, want nil", i+1, err)
+		}
+	}
+
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("Stat() error = %v, want nil", err)
+	}
+	if !info.IsDir() {
+		t.Errorf("%s がディレクトリではない", dir)
+	}
+}
+
+func TestMkdirAllDurable_FileInTheWayErrors(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v, want nil", err)
+	}
+
+	if err := mkdirAllDurable(filepath.Join(root, "a", "b")); err == nil {
+		t.Fatalf("mkdirAllDurable() error = nil, want error")
+	}
+}
+
+func TestSyncDir_ExistingDirSucceeds(t *testing.T) {
+	if err := syncDir(t.TempDir()); err != nil {
+		t.Fatalf("syncDir() error = %v, want nil", err)
+	}
+}
