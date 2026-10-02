@@ -1,0 +1,57 @@
+# PR の Go のコードを, 使う予定のある対象 (サーバの Linux, ネイティブクライアントの macOS, Windows, Android, 研究室の機体の linux/arm64) で確かめる.
+# ファイルの同期や rename は OS ごとに振る舞いが違い, OS ごとのファイル (sync_dir_windows.go 等) もあるので, 1つの OS だけでは足りない.
+name: CI
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+# 同じ PR に続けて push したら, 古い方の実行は止める.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    # PR の画面と Ruleset に出る確認の名前. matrix の値を全部並べた名前にならないようにする.
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # Ubuntu は latest ではなく, 研究室の機械に合わせて固定する. x64 はホストと同じ 26.04, arm64 は Jetson の JetPack と同じ 24.04. 研究室の機械を上げた時に, ここも上げる.
+        include:
+          # データの競合の検出 (-race) は重いので, x64 の Linux だけで行う.
+          - os: ubuntu-26.04
+            race: -race
+          # 研究室の機体 (Jetson 等) と同じ arm64 の Linux で, テストを実際に回す.
+          - os: ubuntu-24.04-arm
+            race: ""
+          - os: macos-latest
+            race: ""
+          - os: windows-latest
+            race: ""
+    runs-on: ${{ matrix.os }}
+    # 止まらなくなった時に, 既定の6時間まで走らせ続けないようにする.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod # yamaoki-lint:ignore
+      - name: gofmt
+        if: matrix.os == 'ubuntu-26.04'
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "gofmt が必要なファイル:"
+            echo "$unformatted"
+            exit 1
+          fi
+      - run: go vet ./...
+      # Android はテストを回す環境が無いので, コンパイルが通るかと go vet の点検だけを見る.
+      - name: go vet (android/arm64)
+        if: matrix.os == 'ubuntu-26.04'
+        run: GOOS=android GOARCH=arm64 go vet ./...
+      - run: go test ${{ matrix.race }} ./...

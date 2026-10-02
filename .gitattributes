@@ -1,0 +1,2 @@
+# schema/*.sql は, 公開した後の SHA-256 をテストで固定している. Windows で取り出した時に改行が CRLF に変わると SHA-256 が変わるので, 改行を LF に固定する.
+internal/itemstore/schema/*.sql text eol=lf
