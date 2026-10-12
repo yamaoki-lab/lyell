@@ -8,6 +8,10 @@ jobs:
   notify:
     if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
+    # ready_for_review の時に PR の timeline を読むため
+    permissions:
+      issues: read
+      pull-requests: read
     steps:
       - name: 対象確認 + Google Chatへ通知
         env:
@@ -25,20 +29,49 @@ jobs:
           DELETIONS: ${{ github.event.pull_request.deletions }}
           CHANGED_FILES: ${{ github.event.pull_request.changed_files }}
           LABELS_JSON: ${{ toJSON(github.event.pull_request.labels) }}
-          REQUESTED_REVIEWERS_JSON: ${{ toJSON(github.event.pull_request.requested_reviewers) }}
-          REQUESTED_TEAMS_JSON: ${{ toJSON(github.event.pull_request.requested_teams) }}
+          EVENT_ACTION: ${{ github.event.action }}
+          REQUESTED_REVIEWER: ${{ github.event.requested_reviewer.login }}
+          REQUESTED_TEAM: ${{ github.event.requested_team.slug }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          # review_requested/ready_for_reviewのどちらのイベントでも,
-          # PRオブジェクト自体の"現在レビュー待ちの相手"を見れば同じロジックで
-          # 判定できる (個人指定/チーム指定のどちらも, GitHub Actionsの式構文に
-          # 頼らずjqで確実に判定する)
-          IS_TARGET=$(jq -n \
-            --argjson reviewers "$REQUESTED_REVIEWERS_JSON" \
-            --argjson teams "$REQUESTED_TEAMS_JSON" \
-            '(($reviewers // []) | any(.login == "yamaokilab")) or (($teams // []) | any(.slug == "admin"))')
+          # timeline を読めなかった時に, 黙って飛ばさず失敗として見えるようにする
+          set -o pipefail
+
+          # 先生 (個人の yamaokilab) か admin チームへのレビュー依頼の時だけ通知する.
+          # 1つの依頼につき通知は1回にする (ready にした瞬間の CODEOWNERS の依頼で
+          # ready_for_review と review_requested が同時に来ても, 重ねて送らない)
+          case "$EVENT_ACTION" in
+            review_requested)
+              # このイベントで新しく頼まれた相手だけを見る. PR の "今待っている相手" の
+              # 全体を見ると, 後で別の人を頼んだ時にも先生へ通知してしまう
+              if [ "$REQUESTED_REVIEWER" = "yamaokilab" ] || [ "$REQUESTED_TEAM" = "admin" ]; then
+                IS_TARGET=true
+              else
+                IS_TARGET=false
+              fi
+              ;;
+            ready_for_review)
+              # draft の間の依頼は通知を飛ばしているので, ready にした時に拾う.
+              # ready と同時に CODEOWNERS が頼んだ分は review_requested の側が送るので,
+              # ready より前 (draft へ戻したことがあれば, その後) の依頼で, 外されずに
+              # 残っているものだけを見る
+              IS_TARGET=$(gh api "repos/$GH_REPO/issues/$PR_NUMBER/timeline" --paginate --jq '.[]' | jq -s '
+                (map(select(.event == "ready_for_review")) | last | .created_at) as $ready
+                | (map(select(.event == "convert_to_draft" and .created_at < $ready)) | last | .created_at // "") as $draft
+                | map(select(
+                    (.event == "review_requested" or .event == "review_request_removed")
+                    and .created_at > $draft and .created_at < $ready
+                    and ((.requested_reviewer.login // "") == "yamaokilab" or (.requested_team.slug // "") == "admin")))
+                | (last | .event) == "review_requested"')
+              ;;
+            *)
+              IS_TARGET=false
+              ;;
+          esac
 
           if [ "$IS_TARGET" != "true" ]; then
-            echo "先生 (個人またはadminチーム) 宛のレビュー依頼ではないのでスキップします"
+            echo "先生 (個人またはadminチーム) への新しいレビュー依頼ではないのでスキップします"
             exit 0
           fi
 
