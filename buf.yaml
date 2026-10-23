@@ -1,0 +1,14 @@
+# .proto の置き場と, lint と breaking の検査の決まり (#5).
+version: v2 # yamaoki-lint:ignore
+modules:
+  - path: proto
+lint:
+  # COMMENTS は, 全ての要素に説明を求める. 説明からドキュメントを生成するため.
+  use:
+    - STANDARD
+    - COMMENTS
+breaking:
+  # v1alpha1 のような安定していない名前空間の間は, 変えても止めない. v1 になると効き始める.
+  use:
+    - FILE
+  ignore_unstable_packages: true
