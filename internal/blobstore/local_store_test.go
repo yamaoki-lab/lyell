@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,28 +39,25 @@ func TestLocalStore_PutThenOpenRoundTrips(t *testing.T) {
 	}
 }
 
-func TestLocalStore_ExistsReflectsPut(t *testing.T) {
+func TestLocalStore_SizeReflectsPut(t *testing.T) {
 	store := NewLocalStore(t.TempDir())
 	ctx := context.Background()
 
-	ok, err := store.Exists(ctx, sumOf("hello"))
-	if err != nil {
-		t.Fatalf("Exists() error = %v, want nil", err)
-	}
-	if ok {
-		t.Fatalf("Exists() = true before Put, want false")
+	// Store.Exists は, 無いことを fs.ErrNotExist で見分ける. 他のエラーと混ざると, 無い blob を "読めない" として扱ってしまう.
+	if _, err := store.Size(ctx, sumOf("hello")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("Put の前の Size() error = %v, want fs.ErrNotExist", err)
 	}
 
 	if err := store.Put(ctx, sumOf("hello"), strings.NewReader("hello")); err != nil {
 		t.Fatalf("Put() error = %v, want nil", err)
 	}
 
-	ok, err = store.Exists(ctx, sumOf("hello"))
+	n, err := store.Size(ctx, sumOf("hello"))
 	if err != nil {
-		t.Fatalf("Exists() error = %v, want nil", err)
+		t.Fatalf("Put の後の Size() error = %v, want nil", err)
 	}
-	if !ok {
-		t.Fatalf("Exists() = false after Put, want true")
+	if n != int64(len("hello")) {
+		t.Errorf("Size() = %d, want %d", n, len("hello"))
 	}
 }
 

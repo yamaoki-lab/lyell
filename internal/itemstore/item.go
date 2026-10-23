@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"time"
 
 	"github.com/google/uuid"
@@ -56,6 +57,8 @@ type Content struct {
 	AuthorMachine string
 	// Blob は, 中身のバイト列 (blob) の SHA-256. 記録した後は, バイト列を手元に持っているか (転送から外した等) とは別になる. 持っているかは blobstore に聞く.
 	Blob blobstore.Sum
+	// BlobSize は, blob のバイト数. 記録する時は itemstore が blobstore から入れるので, 渡した値は使わない.
+	BlobSize int64
 	// Body は, revision の情報 (名前, メモ, content profile 等) を Protobuf で表したもの. itemstore は中身を解釈せず, 受け取ったバイト列をそのまま持つ. 空の Protobuf のメッセージは0バイトになるので, 空でもよい.
 	Body []byte
 }
@@ -72,11 +75,15 @@ type Revision struct {
 // ErrNotFound は, 指定した item や revision が無い時のエラー.
 var ErrNotFound = errors.New("itemstore: 見つからない")
 
+// ErrBlobNotFound は, Data を渡さずに記録しようとした時に, Content.Blob の blob が置かれていないことを表す.
+var ErrBlobNotFound = errors.New("itemstore: blob が置かれていない")
+
 // NewItem は, CreateItem で作る item の説明. 項目を足しても呼び出し側を直さずに済むよう, 引数を並べずにこの形で受け取る. 書かなかった項目は空の値になる.
 type NewItem struct {
 	Kind    Kind
-	Content Content   // 最初の revision の中身
-	Data    io.Reader // 中身のバイト列 (blob). SHA-256 が Content.Blob と合わなければ何も記録しない
+	Content Content // 最初の revision の中身
+	// Data は, 中身のバイト列 (blob). SHA-256 が Content.Blob と合わなければ何も記録しない. nil なら, blob は先に置いてあるものとし, 無ければ ErrBlobNotFound を返す (API で blob を RPC の外で先に送った時).
+	Data io.Reader
 	// PutOptions は, blob を書く時の選択肢 (置き場の指定等). 無ければ置き場の既定に従う.
 	PutOptions []blobstore.PutOption
 }
@@ -92,9 +99,11 @@ func (s *Store) CreateItem(ctx context.Context, n NewItem) (Item, error) {
 	if err := content.validate(); err != nil {
 		return Item{}, err
 	}
-	if err := s.putBlob(ctx, content.Blob, n.Data, n.PutOptions); err != nil {
+	size, err := s.placeBlob(ctx, content.Blob, n.Data, n.PutOptions)
+	if err != nil {
 		return Item{}, err
 	}
+	content.BlobSize = size
 	itemID, err := NewID()
 	if err != nil {
 		return Item{}, err
@@ -124,15 +133,23 @@ func (s *Store) CreateItem(ctx context.Context, n NewItem) (Item, error) {
 	return Item{ID: itemID, Kind: kind, Head: revID}, nil
 }
 
-// putBlob は, 記録する前に blob を書く. CreateItem と CommitRevision で共通.
-func (s *Store) putBlob(ctx context.Context, sum blobstore.Sum, data io.Reader, opts []blobstore.PutOption) error {
-	if data == nil {
-		return errors.New("中身のバイト列 (Data) が無い")
+// placeBlob は, 記録する前に blob が置かれていることを確かめ, その大きさを返す. data があれば先に書き, nil なら置いてあるものを使う. CreateItem と CommitRevision で共通.
+//
+// 置いてあることを確かめてから記録するまでの間に, blob が消されることは考えない. 誰からも指されない blob を消す GC を作る時に, 置いてすぐの blob を消さない猶予を設ける.
+func (s *Store) placeBlob(ctx context.Context, sum blobstore.Sum, data io.Reader, opts []blobstore.PutOption) (int64, error) {
+	if data != nil {
+		if err := s.blobs.Put(ctx, sum, data, opts...); err != nil {
+			return 0, fmt.Errorf("blob を書けない: %w", err)
+		}
 	}
-	if err := s.blobs.Put(ctx, sum, data, opts...); err != nil {
-		return fmt.Errorf("blob を書けない: %w", err)
+	size, err := s.blobs.Size(ctx, sum)
+	if errors.Is(err, fs.ErrNotExist) {
+		return 0, fmt.Errorf("blob %s: %w", sum, ErrBlobNotFound)
 	}
-	return nil
+	if err != nil {
+		return 0, fmt.Errorf("blob %s の大きさを読めない: %w", sum, err)
+	}
+	return size, nil
 }
 
 func insertRevision(ctx context.Context, tx *sql.Tx, id, itemID ID, c Content) error {
@@ -142,9 +159,9 @@ func insertRevision(ctx context.Context, tx *sql.Tx, id, itemID ID, c Content) e
 		body = []byte{}
 	}
 	_, err := tx.ExecContext(ctx, `
-INSERT INTO revisions (id, item_id, created_at, author_user, author_machine, blob_sha256, body)
-VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		id[:], itemID[:], c.CreatedAt.UnixMilli(), c.AuthorUser, c.AuthorMachine, c.Blob[:], body)
+INSERT INTO revisions (id, item_id, created_at, author_user, author_machine, blob_sha256, blob_size, body)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		id[:], itemID[:], c.CreatedAt.UnixMilli(), c.AuthorUser, c.AuthorMachine, c.Blob[:], c.BlobSize, body)
 	return err
 }
 
@@ -179,15 +196,15 @@ func (s *Store) Revision(ctx context.Context, id ID) (Revision, error) {
 
 	var (
 		itemID                    []byte
-		createdAt                 sql.NullInt64
+		createdAt, blobSize       sql.NullInt64
 		authorUser, authorMachine sql.NullString
 		blob, body                []byte
 		thinned                   bool
 	)
 	// 長さ0の BLOB は, ドライバによっては nil として読める. 間引かれたかどうかは body の nil ではなく, IS NULL で DB に聞く.
 	err = tx.QueryRowContext(ctx, `
-SELECT item_id, created_at, author_user, author_machine, blob_sha256, body, body IS NULL
-FROM revisions WHERE id = ?`, id[:]).Scan(&itemID, &createdAt, &authorUser, &authorMachine, &blob, &body, &thinned)
+SELECT item_id, created_at, author_user, author_machine, blob_sha256, blob_size, body, body IS NULL
+FROM revisions WHERE id = ?`, id[:]).Scan(&itemID, &createdAt, &authorUser, &authorMachine, &blob, &blobSize, &body, &thinned)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Revision{}, fmt.Errorf("revision %s: %w", id, ErrNotFound)
 	}
@@ -208,6 +225,7 @@ FROM revisions WHERE id = ?`, id[:]).Scan(&itemID, &createdAt, &authorUser, &aut
 			CreatedAt:     time.UnixMilli(createdAt.Int64).UTC(),
 			AuthorUser:    authorUser.String,
 			AuthorMachine: authorMachine.String,
+			BlobSize:      blobSize.Int64,
 			Body:          body,
 		}
 		if len(blob) != len(c.Blob) {

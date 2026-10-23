@@ -24,7 +24,7 @@ var goMigrations = map[int]migration{}
 
 // migrations の i 番目 (0 始まり) は, schema version i を i+1 へ上げる. schema version は DB のファイルの user_version に入る. // yamaoki-lint:ignore
 //
-// 一度公開したファイルや関数は書き換えない. 既に上げ終えた DB には二度と適用されないので, 書き換えると, 新しく作った DB と上げてきた DB で形が食い違う. 変更は, 次の番号で足して行う.
+// 一度公開したファイルや関数は書き換えない. 既に上げ終えた DB には二度と適用されないので, 書き換えると, 新しく作った DB と上げてきた DB で形が食い違う. 変更は, 次の番号で足して行う. 公開は, 最初のタグ (v0.1.0) を打つこと.
 var migrations = mustLoadMigrations(schemaFiles, goMigrations)
 
 func mustLoadMigrations(files fs.FS, goFuncs map[int]migration) []migration {

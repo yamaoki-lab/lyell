@@ -6,9 +6,11 @@ package blobstore
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"hash"
 	"io"
+	"io/fs"
 )
 
 // Backend は, 置き場の実装が満たすもの. 使う側は直接呼ばずに, New で包んだ Store を使う.
@@ -21,8 +23,8 @@ type Backend interface {
 	CheckPutOptions(opts ...PutOption) error
 	// Open は sum の blob を読み取る ReadCloser を返す.
 	Open(ctx context.Context, sum Sum) (io.ReadCloser, error)
-	// Exists は sum の blob が既にあるかを報告する.
-	Exists(ctx context.Context, sum Sum) (bool, error)
+	// Size は sum の blob のバイト数を返す. 無ければ fs.ErrNotExist を包んだエラーを返す. 有るかだけを知りたい使う側には, Store が Exists を用意する.
+	Size(ctx context.Context, sum Sum) (int64, error)
 }
 
 // Store は, Backend を包み, 書く中身が名前の SHA-256 と合うかを確かめる.
@@ -61,7 +63,7 @@ func (s *Store) Put(ctx context.Context, sum Sum, data io.Reader, opts ...PutOpt
 	if err != nil {
 		return err
 	}
-	ok, err := s.backend.Exists(ctx, sum)
+	ok, err := s.Exists(ctx, sum)
 	if err != nil {
 		unlock()
 		return err
@@ -87,9 +89,21 @@ func (s *Store) Open(ctx context.Context, sum Sum) (io.ReadCloser, error) {
 	return s.backend.Open(ctx, sum)
 }
 
+// Size は, sum の blob のバイト数を返す. 無ければ fs.ErrNotExist を包んだエラーを返す.
+func (s *Store) Size(ctx context.Context, sum Sum) (int64, error) {
+	return s.backend.Size(ctx, sum)
+}
+
 // Exists は, sum の blob が既にあるかを報告する.
 func (s *Store) Exists(ctx context.Context, sum Sum) (bool, error) {
-	return s.backend.Exists(ctx, sum)
+	_, err := s.backend.Size(ctx, sum)
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	return false, err
 }
 
 // verifyingReader は, 読んだ中身の SHA-256 を計算しながら r を読み, 最後まで読んだ時に want と合わなければ io.EOF の代わりに *MismatchError を返す.

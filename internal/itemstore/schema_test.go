@@ -11,8 +11,10 @@ import (
 )
 
 // releasedSchemaFiles は, 公開した SQL のファイルの SHA-256. 公開したファイルを書き換えると, 既に上げ終えた DB と新しく作った DB で形が食い違うので, 書き換えたらこのテストで気付けるようにする. 新しいファイルを公開する時に, ここへ足す.
+//
+// 公開は, 最初のタグ (v0.1.0) を打つこと. それより前に書き換える時は, わざと書き換えたことを示すため, ここの値も直す.
 var releasedSchemaFiles = map[string]string{
-	"schema/0001.sql": "c8f7b5f38034441ea26bcd42a371f7df6aa6df99f9cc833159bc40a6cd4ee02d",
+	"schema/0001.sql": "13ff011f5c30a04bb89fdadaf53377c3b1312ca7886b17e442a78e2fbfd16473",
 }
 
 func TestSchemaFiles_ReleasedAreUnchanged(t *testing.T) {
