@@ -54,4 +54,20 @@ jobs:
       - name: go vet (android/arm64)
         if: matrix.os == 'ubuntu-26.04'
         run: GOOS=android GOARCH=arm64 go vet ./...
+      # golangci-lint は新しいリリースで検査が増え, 関係の無い PR が落ちうるので, バージョンを固定する. 上げる時は, 増えた指摘を直す PR と一緒にする.
+      # OS ごとのファイル (sync_dir_windows.go 等) も点検するため, Linux と Windows を対象に2回走らせる.
+      - name: golangci-lint (linux)
+        if: matrix.os == 'ubuntu-26.04'
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.15.0 # yamaoki-lint:ignore
+      - name: golangci-lint (windows)
+        if: matrix.os == 'ubuntu-26.04'
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        env:
+          GOOS: windows
+        with:
+          version: v2.15.0 # yamaoki-lint:ignore
+          # キャッシュは1回目の分を保存する. 同じ鍵で2回保存しようとして警告が出ないようにする.
+          skip-save-cache: true
       - run: go test ${{ matrix.race }} ./...

@@ -1,0 +1,7 @@
+# 既定の検査 (errcheck, govet, ineffassign, staticcheck, unused) をそのまま使う. 捨てる戻り値は, 除外の設定ではなくコードで `_ =` と明示する.
+version: "2" # yamaoki-lint:ignore
+
+issues:
+  # 既定では同じ文の指摘を3件まで, 1つの検査で50件までしか出さず, 件数を少なく読み違える. 全て出す.
+  max-issues-per-linter: 0
+  max-same-issues: 0

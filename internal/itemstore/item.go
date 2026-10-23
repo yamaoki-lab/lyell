@@ -108,7 +108,7 @@ func (s *Store) CreateItem(ctx context.Context, n NewItem) (Item, error) {
 	if err != nil {
 		return Item{}, err
 	}
-	defer tx.Rollback() // Commit の後は何もしない
+	defer func() { _ = tx.Rollback() }() // Commit の後は何もしない
 
 	// items と revisions は互いを指すが, その検査はコミットの時なので, 入れる順は問わない.
 	if _, err := tx.ExecContext(ctx, "INSERT INTO items (id, kind, head) VALUES (?, ?, ?)", itemID[:], string(kind), revID[:]); err != nil {
@@ -175,7 +175,7 @@ func (s *Store) Revision(ctx context.Context, id ID) (Revision, error) {
 	if err != nil {
 		return Revision{}, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	var (
 		itemID                    []byte
@@ -221,7 +221,7 @@ FROM revisions WHERE id = ?`, id[:]).Scan(&itemID, &createdAt, &authorUser, &aut
 	if err != nil {
 		return Revision{}, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var raw []byte
 		if err := rows.Scan(&raw); err != nil {

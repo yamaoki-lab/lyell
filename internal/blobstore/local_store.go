@@ -43,14 +43,14 @@ func (s *LocalStore) Put(_ context.Context, sum Sum, data io.Reader, _ ...PutOpt
 	}
 	tmpPath := tmp.Name()
 	// rename に成功していれば tmpPath は既に無いので, ここの Remove はエラーを返すだけになる (無視してよい). 途中で失敗した時は, これが後片付けになる.
-	defer os.Remove(tmpPath)
+	defer func() { _ = os.Remove(tmpPath) }()
 
 	if _, err := io.Copy(tmp, data); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if err := tmp.Sync(); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if err := tmp.Close(); err != nil {

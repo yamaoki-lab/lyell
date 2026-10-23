@@ -17,7 +17,7 @@ func assertNoDanglingBlobs(t *testing.T, s *Store) {
 	if err != nil {
 		t.Fatalf("revision を読めない: %v", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id, raw []byte
 		if err := rows.Scan(&id, &raw); err != nil {
@@ -60,7 +60,7 @@ func TestCreateItem_WritesBlobThenRecords(t *testing.T) {
 	if err != nil {
 		t.Fatalf("blob を開けない: %v", err)
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 	got, err := io.ReadAll(r)
 	if err != nil {
 		t.Fatalf("blob を読めない: %v", err)
@@ -102,7 +102,9 @@ func TestCreateItem_RecordFailureLeavesOnlyOrphanBlob(t *testing.T) {
 	content := testContent("hello")
 
 	// blob を書いた後の記録を失敗させるため, 書き込み用の DB を先に閉じておく.
-	s.write.Close()
+	if err := s.write.Close(); err != nil {
+		t.Fatalf("Close() error = %v, want nil", err)
+	}
 	if _, err := s.CreateItem(ctx, NewItem{Kind: KindAsset, Content: content, Data: strings.NewReader("hello")}); err == nil {
 		t.Fatalf("記録に失敗する CreateItem() error = nil, want error")
 	}
