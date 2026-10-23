@@ -76,8 +76,9 @@ func TestCreateItem_ThenRead(t *testing.T) {
 	}
 	want := content
 	want.CreatedAt = content.CreatedAt.Truncate(time.Millisecond)
+	want.BlobSize = int64(len(content.Body))
 	c := rev.Content
-	if !c.CreatedAt.Equal(want.CreatedAt) || c.AuthorUser != want.AuthorUser || c.AuthorMachine != want.AuthorMachine || c.Blob != want.Blob || !bytes.Equal(c.Body, want.Body) {
+	if !c.CreatedAt.Equal(want.CreatedAt) || c.AuthorUser != want.AuthorUser || c.AuthorMachine != want.AuthorMachine || c.Blob != want.Blob || c.BlobSize != want.BlobSize || !bytes.Equal(c.Body, want.Body) {
 		t.Errorf("Revision().Content = %+v, want %+v", *c, want)
 	}
 }

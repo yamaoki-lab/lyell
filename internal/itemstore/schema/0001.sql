@@ -1,6 +1,7 @@
 -- schema version 1: item と revision の3つの表 (nk-a-79/hozonnyou#119).
 --
 -- このファイルは公開した後に書き換えない. 既に適用した DB には二度と適用されないので, 書き換えると新しく作った DB と上げてきた DB で形が食い違う. 変更は次の番号のファイルで行う.
+-- 公開は, Lyell の最初のタグ (v0.1.0) を打つこと. それより前は実際のデータを記録した DB が無いので, 書き換えてよい (その時は schema_test.go の SHA-256 も直す).
 --
 -- 表の決まりの理由は, 各 CREATE の中にコメントで書く. SQLite は文の中のコメントを DB のファイルに残すので, sqlite3 の .schema やドキュメントの道具からも読める (文の外のコメントは残らない).
 
@@ -27,6 +28,7 @@ CREATE TABLE revisions (
   --
   -- 中身 (created_at から body まで) は, 間引くと NULL になり, ID と親だけの骨格が残る. 間引かれていない (body がある) なら他の中身の列も必ずある, という片向きの CHECK にする. 間引いた後にどの列を残すかは, 後から変えても表を作り直さずに済む.
   -- blob_sha256 は blob への参照で, バイト列を手元に持っているか (転送から外した等) とは別. 持っているかは記録せず, blobstore に都度聞く.
+  -- blob_size も記録する. 作業コピーを OS のファイルシステムとして見せる時に, 一覧のたびに blob へ大きさを聞かずに答えるため. blob を手元に持っていない機体でも答えられる.
   -- 主キーの NOT NULL: SQLite は古い互換のため, 行番号を持つ表の主キーに NULL を許してしまう.
   -- WITHOUT ROWID にしない: body が数 KB になりうるので, 行を主キーの順に並べると遅くなる.
   -- UNIQUE (item_id, id): items の (id, head) の外部キーの参照先. item_id で引く索引も兼ねる.
@@ -36,9 +38,10 @@ CREATE TABLE revisions (
   author_user    TEXT,     -- 記録した利用者. 認証の無い経路なら anonymous
   author_machine TEXT,     -- 記録した機体. 認証の無い経路なら anonymous
   blob_sha256    BLOB CHECK (length(blob_sha256) = 32),
-  body           BLOB,     -- Protobuf. これが正で, 上の4列は body から計算し直せる. 空のメッセージは長さ0 (NULL ではない)
+  blob_size      INTEGER CHECK (blob_size >= 0),  -- blob のバイト数
+  body           BLOB,     -- Protobuf. これが正で, 上の5列は body から計算し直せる. 空のメッセージは長さ0 (NULL ではない)
   UNIQUE (item_id, id),
-  CHECK (body IS NULL OR (created_at IS NOT NULL AND author_user IS NOT NULL AND author_machine IS NOT NULL AND blob_sha256 IS NOT NULL))
+  CHECK (body IS NULL OR (created_at IS NOT NULL AND author_user IS NOT NULL AND author_machine IS NOT NULL AND blob_sha256 IS NOT NULL AND blob_size IS NOT NULL))
 ) STRICT;
 
 CREATE TABLE revision_parents (

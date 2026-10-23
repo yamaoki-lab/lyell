@@ -370,8 +370,8 @@ func insertTestItem(tx *sql.Tx, item, head []byte) error {
 }
 
 func insertTestRevision(tx *sql.Tx, id, item []byte) error {
-	_, err := tx.Exec(`INSERT INTO revisions (id, item_id, created_at, author_user, author_machine, blob_sha256, body)
-		VALUES (?, ?, 1700000000000, 'user', 'machine', ?, x'00')`, id, item, make([]byte, 32))
+	_, err := tx.Exec(`INSERT INTO revisions (id, item_id, created_at, author_user, author_machine, blob_sha256, blob_size, body)
+		VALUES (?, ?, 1700000000000, 'user', 'machine', ?, 0, x'00')`, id, item, make([]byte, 32))
 	return err
 }
 
@@ -387,8 +387,8 @@ func TestSchema_RejectsWrongLengthIDs(t *testing.T) {
 		if _, err := tx.Exec("INSERT INTO items (id, kind, head) VALUES (?, 'asset', ?)", testID(1), testID(2)); err != nil {
 			return err
 		}
-		_, err := tx.Exec(`INSERT INTO revisions (id, item_id, created_at, author_user, author_machine, blob_sha256, body)
-			VALUES (?, ?, 0, 'user', 'machine', ?, x'00')`, testID(2), testID(1), make([]byte, 31))
+		_, err := tx.Exec(`INSERT INTO revisions (id, item_id, created_at, author_user, author_machine, blob_sha256, blob_size, body)
+			VALUES (?, ?, 0, 'user', 'machine', ?, 0, x'00')`, testID(2), testID(1), make([]byte, 31))
 		return err
 	})
 	if err == nil || !strings.Contains(err.Error(), "CHECK") {
@@ -461,23 +461,31 @@ func TestSchema_ParentMayBelongToAnotherItem(t *testing.T) {
 func TestSchema_LiveRevisionMustBeComplete(t *testing.T) {
 	s, _ := openTestStore(t)
 
-	insert := func(created, user, machine, sha, body any) error {
+	insert := func(created, user, machine, sha, size, body any) error {
 		return inTx(t, s, func(tx *sql.Tx) error {
 			if _, err := tx.Exec("INSERT INTO items (id, kind, head) VALUES (?, 'asset', ?)", testID(1), testID(2)); err != nil {
 				return err
 			}
-			_, err := tx.Exec(`INSERT INTO revisions (id, item_id, created_at, author_user, author_machine, blob_sha256, body)
-				VALUES (?, ?, ?, ?, ?, ?, ?)`, testID(2), testID(1), created, user, machine, sha, body)
+			_, err := tx.Exec(`INSERT INTO revisions (id, item_id, created_at, author_user, author_machine, blob_sha256, blob_size, body)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, testID(2), testID(1), created, user, machine, sha, size, body)
 			return err
 		})
 	}
+	sha := make([]byte, 32)
 
 	// body があるのに blob への参照が無い revision は断る.
-	if err := insert(int64(0), "user", "machine", nil, []byte{0}); err == nil || !strings.Contains(err.Error(), "CHECK") {
+	if err := insert(int64(0), "user", "machine", nil, int64(0), []byte{0}); err == nil || !strings.Contains(err.Error(), "CHECK") {
 		t.Errorf("blob_sha256 の無い revision の error = %v, want CHECK", err)
 	}
+	// body があるのに blob の大きさが無い revision も断る. 大きさが無いと, ファイルシステムとして見せる時に答えられない.
+	if err := insert(int64(0), "user", "machine", sha, nil, []byte{0}); err == nil || !strings.Contains(err.Error(), "CHECK") {
+		t.Errorf("blob_size の無い revision の error = %v, want CHECK", err)
+	}
+	if err := insert(int64(0), "user", "machine", sha, int64(-1), []byte{0}); err == nil || !strings.Contains(err.Error(), "CHECK") {
+		t.Errorf("blob_size が負の revision の error = %v, want CHECK", err)
+	}
 	// 間引いて作成者だけを残した骨格は, 将来の選択肢として通す.
-	if err := insert(nil, "user", nil, nil, nil); err != nil {
+	if err := insert(nil, "user", nil, nil, nil, nil); err != nil {
 		t.Errorf("作成者だけを残した骨格の error = %v, want nil", err)
 	}
 }
