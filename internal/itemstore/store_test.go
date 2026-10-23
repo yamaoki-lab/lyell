@@ -26,7 +26,7 @@ func openTestStore(t *testing.T) (*Store, string) {
 	if err != nil {
 		t.Fatalf("Open() error = %v, want nil", err)
 	}
-	t.Cleanup(func() { s.Close() })
+	t.Cleanup(func() { _ = s.Close() })
 	return s, path
 }
 
@@ -47,7 +47,7 @@ func userVersion(t *testing.T, path string) int {
 	if err != nil {
 		t.Fatalf("sql.Open() error = %v, want nil", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	var v int
 	if err := db.QueryRow("PRAGMA user_version").Scan(&v); err != nil { // yamaoki-lint:ignore
 		t.Fatalf("DB の schema version を読めない: error = %v, want nil", err)
@@ -70,7 +70,7 @@ func TestOpen_WriteConnectionHasPragmas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Conn() error = %v, want nil", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	want := map[string]string{
 		"foreign_keys": "1",
@@ -99,7 +99,7 @@ func TestOpen_EveryReadConnectionHasPragmas(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Conn() (%d本目) error = %v, want nil", i+1, err)
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		if got := pragma(t, conn, "foreign_keys"); got != "1" {
 			t.Errorf("読み取り用 %d本目の PRAGMA foreign_keys = %s, want 1", i+1, got)
 		}
@@ -139,14 +139,18 @@ func TestOpen_AppliesSchemaOnceAndWithoutBackupWhenNew(t *testing.T) {
 			t.Errorf("表 %s が無い: %v", table, err)
 		}
 	}
-	s.Close()
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close() error = %v, want nil", err)
+	}
 
 	// 開き直しても, schema version はそのままで, 複製も作らない.
 	s2, err := Open(context.Background(), Config{Path: path, Blobs: newTestBlobs(t)})
 	if err != nil {
 		t.Fatalf("2回目の Open() error = %v, want nil", err)
 	}
-	s2.Close()
+	if err := s2.Close(); err != nil {
+		t.Fatalf("Close() error = %v, want nil", err)
+	}
 	if got := userVersion(t, path); got != len(migrations) {
 		t.Errorf("DB の schema version = %d, want %d", got, len(migrations))
 	}
@@ -160,10 +164,12 @@ func TestOpen_RejectsNewerSchema(t *testing.T) {
 	if _, err := s.write.Exec("PRAGMA user_version = 99"); err != nil { // yamaoki-lint:ignore
 		t.Fatalf("DB の schema version を書けない: %v", err)
 	}
-	s.Close()
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close() error = %v, want nil", err)
+	}
 
 	if s2, err := Open(context.Background(), Config{Path: path, Blobs: newTestBlobs(t)}); err == nil {
-		s2.Close()
+		_ = s2.Close()
 		t.Fatalf("新しい schema version の DB を開けた, want error")
 	}
 }
@@ -177,10 +183,12 @@ func TestOpen_RejectsForeignDatabase(t *testing.T) {
 	if _, err := db.Exec("CREATE TABLE something (x)"); err != nil {
 		t.Fatalf("CREATE TABLE error = %v, want nil", err)
 	}
-	db.Close()
+	if err := db.Close(); err != nil {
+		t.Fatalf("Close() error = %v, want nil", err)
+	}
 
 	if s, err := Open(context.Background(), Config{Path: path, Blobs: newTestBlobs(t)}); err == nil {
-		s.Close()
+		_ = s.Close()
 		t.Fatalf("Lyell のものではない DB を開けた, want error")
 	}
 }
@@ -188,7 +196,7 @@ func TestOpen_RejectsForeignDatabase(t *testing.T) {
 func TestOpen_RejectsQuestionMarkInPath(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "a?b.db")
 	if s, err := Open(context.Background(), Config{Path: path, Blobs: newTestBlobs(t)}); err == nil {
-		s.Close()
+		_ = s.Close()
 		t.Fatalf("\"?\" を含むパスで開けた, want error")
 	}
 }
@@ -208,14 +216,16 @@ func TestMigrate_UpgradeBacksUpFirst(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open() error = %v, want nil", err)
 	}
-	s.Close()
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close() error = %v, want nil", err)
+	}
 
 	next := append(append([]migration{}, migrations...), createTable("added"))
 	s, err = open(ctx, Config{Path: path, Blobs: newTestBlobs(t)}, next)
 	if err != nil {
 		t.Fatalf("schema version を上げる open() error = %v, want nil", err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	if got := userVersion(t, path); got != len(next) {
 		t.Errorf("DB の schema version = %d, want %d", got, len(next))
@@ -241,7 +251,9 @@ func TestMigrate_FailedStepIsRolledBack(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open() error = %v, want nil", err)
 	}
-	s.Close()
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close() error = %v, want nil", err)
+	}
 
 	failing := func(ctx context.Context, tx *sql.Tx) error {
 		if err := createTable("half")(ctx, tx); err != nil {
@@ -251,7 +263,7 @@ func TestMigrate_FailedStepIsRolledBack(t *testing.T) {
 	}
 	next := append(append([]migration{}, migrations...), failing)
 	if s, err := open(ctx, Config{Path: path, Blobs: newTestBlobs(t)}, next); err == nil {
-		s.Close()
+		_ = s.Close()
 		t.Fatalf("失敗する schema version で open() error = nil, want error")
 	}
 
@@ -262,7 +274,7 @@ func TestMigrate_FailedStepIsRolledBack(t *testing.T) {
 	if err != nil {
 		t.Fatalf("開き直す open() error = %v, want nil", err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 	if _, err := s.read.Exec("SELECT x FROM half"); err == nil {
 		t.Errorf("失敗した schema version で作った表が残っている")
 	}
@@ -284,7 +296,7 @@ func TestSchema_IsStrict(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BeginTx() error = %v, want nil", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// ID を16バイトの BLOB ではなく文字列で入れると, STRICT が断る.
 	_, err = tx.Exec("INSERT INTO items (id, kind, head) VALUES (?, 'asset', ?)", "0190a0b0-c0d0-7000-8000-000000000001", testID(2))
@@ -323,7 +335,7 @@ func TestSchema_DeferredForeignKeysAreCheckedAtCommit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BeginTx() error = %v, want nil", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.Exec("INSERT INTO items (id, kind, head) VALUES (?, 'asset', ?)", testID(1), testID(2)); err != nil {
 		t.Fatalf("INSERT items error = %v, want nil", err)
 	}
@@ -343,7 +355,7 @@ func inTx(t *testing.T, s *Store, f func(tx *sql.Tx) error) error {
 		t.Fatalf("BeginTx() error = %v, want nil", err)
 	}
 	if err := f(tx); err != nil {
-		tx.Rollback()
+		_ = tx.Rollback()
 		return err
 	}
 	return tx.Commit()
@@ -528,7 +540,9 @@ func TestMigrate_LogsUpgradesAndBackup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open() error = %v, want nil", err)
 	}
-	s.Close()
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close() error = %v, want nil", err)
+	}
 	recs := readLog(t, &buf)
 	if len(recs) != 1 || recs[0].Msg != "schema version を上げた" || recs[0].From != 0 || recs[0].To != 1 {
 		t.Errorf("新しい DB のログ = %+v, want 0 から 1 へ上げた1行", recs)
@@ -540,7 +554,9 @@ func TestMigrate_LogsUpgradesAndBackup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("上げる open() error = %v, want nil", err)
 	}
-	s.Close()
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close() error = %v, want nil", err)
+	}
 	recs = readLog(t, &buf)
 	b := backups(t, path)
 	if len(recs) != 2 || len(b) != 1 {
@@ -558,7 +574,9 @@ func TestMigrate_LogsUpgradesAndBackup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("開き直す open() error = %v, want nil", err)
 	}
-	s.Close()
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close() error = %v, want nil", err)
+	}
 	if recs := readLog(t, &buf); len(recs) != 0 {
 		t.Errorf("何もしない時のログ = %+v, want 無し", recs)
 	}
@@ -567,11 +585,11 @@ func TestMigrate_LogsUpgradesAndBackup(t *testing.T) {
 func TestOpen_RequiresPathAndBlobs(t *testing.T) {
 	ctx := context.Background()
 	if s, err := Open(ctx, Config{Blobs: newTestBlobs(t)}); err == nil {
-		s.Close()
+		_ = s.Close()
 		t.Errorf("Path の無い Open() error = nil, want error")
 	}
 	if s, err := Open(ctx, Config{Path: filepath.Join(t.TempDir(), "lyell.db")}); err == nil {
-		s.Close()
+		_ = s.Close()
 		t.Errorf("Blobs の無い Open() error = nil, want error")
 	}
 }

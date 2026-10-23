@@ -54,7 +54,7 @@ func (s *Store) CommitRevision(ctx context.Context, r NewRevision) (ID, error) {
 	if err != nil {
 		return ID{}, err
 	}
-	defer tx.Rollback() // Commit の後は何もしない
+	defer func() { _ = tx.Rollback() }() // Commit の後は何もしない
 
 	if err := insertRevision(ctx, tx, revID, itemID, content); err != nil {
 		return ID{}, err

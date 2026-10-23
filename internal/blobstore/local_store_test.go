@@ -27,7 +27,7 @@ func TestLocalStore_PutThenOpenRoundTrips(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open() error = %v, want nil", err)
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 
 	got, err := io.ReadAll(r)
 	if err != nil {

@@ -120,7 +120,7 @@ func applyMigration(ctx context.Context, db *sql.DB, m migration, to int) error 
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback() // Commit の後は何もしない
+	defer func() { _ = tx.Rollback() }() // Commit の後は何もしない
 	if err := m(ctx, tx); err != nil {
 		return err
 	}

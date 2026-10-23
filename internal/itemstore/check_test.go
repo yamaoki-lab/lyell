@@ -38,14 +38,14 @@ func TestCheck_FindsViolationWrittenWithoutForeignKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open() error = %v, want nil", err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	// 外部キーの検査を有効にし忘れた接続 (SQLite の既定) から書くと, 無い revision を指す行でもエラーにならない.
 	raw, err := sql.Open(driverName, path)
 	if err != nil {
 		t.Fatalf("sql.Open() error = %v, want nil", err)
 	}
-	defer raw.Close()
+	defer func() { _ = raw.Close() }()
 	if _, err := raw.Exec("INSERT INTO revision_parents (revision_id, parent_id) VALUES (?, ?)", testID(1), testID(2)); err != nil {
 		t.Fatalf("検査の無い接続での INSERT error = %v, want nil (エラーにならないことが問題)", err)
 	}

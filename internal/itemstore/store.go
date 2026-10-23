@@ -64,29 +64,29 @@ func open(ctx context.Context, cfg Config, ms []migration) (*Store, error) {
 	write.SetMaxOpenConns(1)
 
 	if err := checkSQLiteVersion(ctx, write); err != nil {
-		write.Close()
+		_ = write.Close()
 		return nil, err
 	}
 	if err := migrate(ctx, write, path, ms, log); err != nil {
-		write.Close()
+		_ = write.Close()
 		return nil, err
 	}
 
 	// 読み取り用は, schema version を上げ終えてから開く. 上げている途中の DB を読ませないため.
 	readDSN, err := dsn(path, readConn)
 	if err != nil {
-		write.Close()
+		_ = write.Close()
 		return nil, err
 	}
 	read, err := sql.Open(driverName, readDSN)
 	if err != nil {
-		write.Close()
+		_ = write.Close()
 		return nil, err
 	}
 	read.SetMaxOpenConns(runtime.GOMAXPROCS(0))
 	if err := read.PingContext(ctx); err != nil {
-		read.Close()
-		write.Close()
+		_ = read.Close()
+		_ = write.Close()
 		return nil, err
 	}
 

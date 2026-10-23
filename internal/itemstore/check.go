@@ -36,7 +36,7 @@ func (s *Store) Check(ctx context.Context) (CheckReport, error) {
 	if err != nil {
 		return CheckReport{}, err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	var r CheckReport
 	if r.Integrity, err = integrityCheck(ctx, conn); err != nil {
@@ -59,7 +59,7 @@ func integrityCheck(ctx context.Context, conn *sql.Conn) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var problems []string
 	for rows.Next() {
 		var line string
@@ -80,7 +80,7 @@ func foreignKeyCheck(ctx context.Context, conn *sql.Conn) ([]ForeignKeyViolation
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var violations []ForeignKeyViolation
 	for rows.Next() {
 		var (
