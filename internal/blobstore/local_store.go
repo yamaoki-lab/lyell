@@ -78,16 +78,13 @@ func (s *LocalStore) Open(_ context.Context, sum Sum) (io.ReadCloser, error) {
 	return os.Open(s.path(sum))
 }
 
-// Exists は, sum の blob が既にあるかを報告する.
-func (s *LocalStore) Exists(_ context.Context, sum Sum) (bool, error) {
-	_, err := os.Stat(s.path(sum))
-	if err == nil {
-		return true, nil
+// Size は, sum の blob のバイト数を返す. 無ければ fs.ErrNotExist を包んだエラーを返す.
+func (s *LocalStore) Size(_ context.Context, sum Sum) (int64, error) {
+	fi, err := os.Stat(s.path(sum))
+	if err != nil {
+		return 0, err
 	}
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
-	return false, err
+	return fi.Size(), nil
 }
 
 // path は, sum の blob のパスを root/sha256/<1〜2文字目>/<3〜4文字目>/<64文字全体> にする (Git LFS と同じ形). 2文字ずつ2段に分けるので, blob が約6700万件になるまで, 1つのディレクトリの中身は1024件以下に収まる. 人がファイラやターミナルで覗いた時に, 一度に並ぶ数が多くなりすぎないようにするため. ファイル名をハッシュ全体にしているのは, 見えている名前をそのまま blob の名前として使えるようにするため. "sha256" の段は, 将来ハッシュの方式を変えた時に並べて置けるようにするため.
