@@ -1,0 +1,11 @@
+# .proto から Go のコードを生成する. 生成の道具は tools/go.mod で固定し, 外のサービスに頼らない.
+# 道具を本体の go.mod に入れないのは, その依存が Lyell を取り込む側のバージョンの選択にまで載るため.
+version: v2 # yamaoki-lint:ignore
+clean: true
+plugins:
+  - local: [go, tool, -modfile=tools/go.mod, protoc-gen-go]
+    out: gen
+    opt: paths=source_relative
+  - local: [go, tool, -modfile=tools/go.mod, protoc-gen-connect-go]
+    out: gen
+    opt: paths=source_relative

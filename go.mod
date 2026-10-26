@@ -5,7 +5,9 @@ go 1.27.0
 toolchain go1.27.3
 
 require (
+	connectrpc.com/connect v1.21.1
 	github.com/google/uuid v1.6.0
+	google.golang.org/protobuf v1.36.12
 	modernc.org/sqlite v1.59.0
 )
 

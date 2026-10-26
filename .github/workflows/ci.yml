@@ -49,6 +49,35 @@ jobs:
             echo "$unformatted"
             exit 1
           fi
+      # buf は tools/go.mod で固定したものを使う. 手元と同じものが走る.
+      - name: buf lint
+        if: matrix.os == 'ubuntu-26.04'
+        run: go tool -modfile=tools/go.mod buf lint
+      - name: buf format
+        if: matrix.os == 'ubuntu-26.04'
+        run: go tool -modfile=tools/go.mod buf format -d --exit-code
+      # main と比べて, 互換を壊す変更が無いかを見る. main にまだ proto/ が無い時は, 比べる相手が無いので飛ばす.
+      - name: buf breaking
+        if: matrix.os == 'ubuntu-26.04'
+        run: |
+          git fetch --depth=1 origin main:refs/remotes/origin/main
+          if git ls-tree -d --name-only origin/main proto | grep -q .; then
+            go tool -modfile=tools/go.mod buf breaking --against ".git#ref=refs/remotes/origin/main"
+          else
+            echo "main に proto/ が無いので飛ばします"
+          fi
+      # Go の生成物はリポジトリに置いているので, 生成し直して .proto と食い違っていないかを確かめる.
+      - name: buf generate
+        if: matrix.os == 'ubuntu-26.04'
+        run: |
+          go tool -modfile=tools/go.mod buf generate
+          changed=$(git status --porcelain gen)
+          if [ -n "$changed" ]; then
+            echo "生成し直すと変わるファイル:"
+            echo "$changed"
+            git diff gen
+            exit 1
+          fi
       - run: go vet ./...
       # Android はテストを回す環境が無いので, コンパイルが通るかと go vet の点検だけを見る.
       - name: go vet (android/arm64)
