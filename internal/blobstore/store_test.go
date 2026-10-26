@@ -44,6 +44,25 @@ func TestStore_PutThenOpenRoundTrips(t *testing.T) {
 	}
 }
 
+func TestStore_SizeAndExistsReflectPut(t *testing.T) {
+	store := New(NewLocalStore(t.TempDir()))
+	ctx := context.Background()
+
+	// 無いことはエラーではなく false. 置き場が読めない時のエラーとは分ける.
+	if ok, err := store.Exists(ctx, sumOf("hello")); err != nil || ok {
+		t.Fatalf("Put の前の Exists() = %v, %v, want false, nil", ok, err)
+	}
+	if err := store.Put(ctx, sumOf("hello"), strings.NewReader("hello")); err != nil {
+		t.Fatalf("Put() error = %v, want nil", err)
+	}
+	if ok, err := store.Exists(ctx, sumOf("hello")); err != nil || !ok {
+		t.Fatalf("Put の後の Exists() = %v, %v, want true, nil", ok, err)
+	}
+	if n, err := store.Size(ctx, sumOf("hello")); err != nil || n != int64(len("hello")) {
+		t.Errorf("Size() = %d, %v, want %d, nil", n, err, len("hello"))
+	}
+}
+
 func TestStore_PutMismatchPlacesNothing(t *testing.T) {
 	root := t.TempDir()
 	local := NewLocalStore(root)

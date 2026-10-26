@@ -65,6 +65,14 @@ func TestCommitRevision_RejectsStaleHeadWithoutWriting(t *testing.T) {
 	if !errors.Is(err, ErrNotFastForward) {
 		t.Fatalf("古い head を前提にした CommitRevision() error = %v, want ErrNotFastForward", err)
 	}
+	// 呼び出し側が読み直さずに統合へ回せるよう, 断った時点の head が分かる.
+	var nff *NotFastForwardError
+	if !errors.As(err, &nff) {
+		t.Fatalf("error = %T, want *NotFastForwardError", err)
+	}
+	if nff.ItemID != item.ID || nff.From != r1 || nff.Head != r2 {
+		t.Errorf("NotFastForwardError = {ItemID: %s, From: %s, Head: %s}, want {%s, %s, %s}", nff.ItemID, nff.From, nff.Head, item.ID, r1, r2)
+	}
 
 	if got, _ := s.Item(ctx, item.ID); got.Head != r2 {
 		t.Errorf("head = %s, want 動かずに %s", got.Head, r2)
@@ -195,9 +203,68 @@ func TestCommitRevision_EmptyParentsMeansFastForwardFromHead(t *testing.T) {
 	}
 }
 
-func TestCreateItem_RequiresData(t *testing.T) {
+// API では, blob を RPC の外で先に置き, 記録の時は SHA-256 だけを渡す. その時 Data は nil になる.
+func TestCreateItem_WithoutDataUsesPlacedBlob(t *testing.T) {
 	s, _ := openTestStore(t)
-	if _, err := s.CreateItem(context.Background(), NewItem{Kind: KindAsset, Content: testContent("x")}); err == nil {
-		t.Errorf("Data の無い CreateItem() error = nil, want error")
+	ctx := context.Background()
+	content := testContent("placed")
+
+	// 置かれていない blob を指して作ろうとしても, 何も残らない. 残すと, 無い blob を指す revision ができる.
+	if _, err := s.CreateItem(ctx, NewItem{Kind: KindAsset, Content: content}); !errors.Is(err, ErrBlobNotFound) {
+		t.Fatalf("blob の無い CreateItem() error = %v, want ErrBlobNotFound", err)
+	}
+	if n := countRows(t, s); n != 0 {
+		t.Errorf("断った後に行が %d 件ある, want 0", n)
+	}
+
+	if err := s.blobs.Put(ctx, content.Blob, strings.NewReader("placed")); err != nil {
+		t.Fatalf("blob を置けない: %v", err)
+	}
+	item, err := s.CreateItem(ctx, NewItem{Kind: KindAsset, Content: content})
+	if err != nil {
+		t.Fatalf("置いた blob を指す CreateItem() error = %v, want nil", err)
+	}
+	rev, err := s.Revision(ctx, item.Head)
+	if err != nil {
+		t.Fatalf("Revision() error = %v, want nil", err)
+	}
+	if rev.Content.Blob != content.Blob || rev.Content.BlobSize != int64(len("placed")) {
+		t.Errorf("記録した blob = %s (%d バイト), want %s (%d バイト)", rev.Content.Blob, rev.Content.BlobSize, content.Blob, len("placed"))
+	}
+}
+
+func TestCommitRevision_WithoutDataUsesPlacedBlob(t *testing.T) {
+	s, _ := openTestStore(t)
+	ctx := context.Background()
+	item, err := s.CreateItem(ctx, newTestItem("r1"))
+	if err != nil {
+		t.Fatalf("CreateItem() error = %v, want nil", err)
+	}
+	content := testContent("r2")
+	before := countRevisions(t, s)
+
+	if _, err := s.CommitRevision(ctx, NewRevision{ItemID: item.ID, From: item.Head, Content: content}); !errors.Is(err, ErrBlobNotFound) {
+		t.Fatalf("blob の無い CommitRevision() error = %v, want ErrBlobNotFound", err)
+	}
+	if got, _ := s.Item(ctx, item.ID); got.Head != item.Head {
+		t.Errorf("断った後の head = %s, want 動かずに %s", got.Head, item.Head)
+	}
+	if after := countRevisions(t, s); after != before {
+		t.Errorf("断った後の revision の数 = %d, want %d", after, before)
+	}
+
+	if err := s.blobs.Put(ctx, content.Blob, strings.NewReader("r2")); err != nil {
+		t.Fatalf("blob を置けない: %v", err)
+	}
+	r2, err := s.CommitRevision(ctx, NewRevision{ItemID: item.ID, From: item.Head, Content: content})
+	if err != nil {
+		t.Fatalf("置いた blob を指す CommitRevision() error = %v, want nil", err)
+	}
+	rev, err := s.Revision(ctx, r2)
+	if err != nil {
+		t.Fatalf("Revision() error = %v, want nil", err)
+	}
+	if rev.Content.BlobSize != int64(len("r2")) {
+		t.Errorf("記録した blob の大きさ = %d, want %d", rev.Content.BlobSize, len("r2"))
 	}
 }
