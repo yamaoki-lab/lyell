@@ -21,11 +21,13 @@ func NewLocalStore(root string) *LocalStore {
 	return &LocalStore{root: root}
 }
 
-// Put は, 同じファイルシステムの上の一時的な置き場 (root/.tmp/) に data を書き, 書き終えてから rename で最終的なパスへ移す. rename は同じファイルシステムの中でだけ不可分なので, システムの一時ディレクトリ (os.TempDir) は使わない.
+// Put は, 同じファイルシステム上の一時ディレクトリ (root/.tmp/) に data を書き込み, 書き込みを終えてから rename で最終的なパスへ移動する. rename は同じファイルシステム内でのみアトミックなので, システムの一時ディレクトリ (os.TempDir) は使用しない.
 //
-// Put が nil を返した時には, 内容とパスがディスクに届いている. 呼び出し側は, この後に DB へ記録してよい. そのために, rename の前にファイルを fsync し, rename の後に置き先のディレクトリを fsync する. 新しく作ったディレクトリも, その親を fsync する.
+// Put が nil を返した時点で, データの内容とパスはディスクに永続化されている. 呼び出し側は, その後に DB へ記録してよい. そのために, rename の前にファイルを fsync し, rename の後に配置先のディレクトリを fsync する. 新しく作成したディレクトリも, その親ディレクトリを fsync する.
 //
-// LocalStore は置き場が1つで, 書き込みの選択肢を1つも知らないので, opts は使わない.
+// blob は読み取り専用 (0444) で作成する. 名前は中身の SHA-256 なので, 作成後に中身が書き換えられると, 名前との不一致を検知できなくなる. 書き込みを終えたら fsync の前に, 一時ファイルの段階でパーミッションを 0444 に変更するので, 書き込み可能な blob が最終的なパスに存在することは無い. Windows では読み取り専用の属性が付く.
+//
+// LocalStore は保存先が1つであり, 書き込みの選択肢を一切サポートしないため, opts は使用しない.
 func (s *LocalStore) Put(_ context.Context, sum Sum, data io.Reader, _ ...PutOption) error {
 	finalPath := s.path(sum)
 	if err := mkdirAllDurable(filepath.Dir(finalPath)); err != nil {
@@ -42,10 +44,14 @@ func (s *LocalStore) Put(_ context.Context, sum Sum, data io.Reader, _ ...PutOpt
 		return err
 	}
 	tmpPath := tmp.Name()
-	// rename に成功していれば tmpPath は既に無いので, ここの Remove はエラーを返すだけになる (無視してよい). 途中で失敗した時は, これが後片付けになる.
+	// rename に成功していれば tmpPath は既に存在しないので, ここの Remove は単にエラーを返すのみとなる (無視して差し支えない). 途中で失敗した場合は, ここで一時ファイルを削除する.
 	defer func() { _ = os.Remove(tmpPath) }()
 
 	if _, err := io.Copy(tmp, data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(0o444); err != nil {
 		_ = tmp.Close()
 		return err
 	}
@@ -63,7 +69,7 @@ func (s *LocalStore) Put(_ context.Context, sum Sum, data io.Reader, _ ...PutOpt
 	return syncDir(filepath.Dir(finalPath))
 }
 
-// CheckPutOptions は, 必須の選択肢があれば断り, 希望は無視する. LocalStore は書き込みの選択肢を1つも知らないため.
+// CheckPutOptions は, 必須の選択肢があれば拒否し, 希望の選択肢は無視する. LocalStore は書き込みの選択肢を一切サポートしないため.
 func (s *LocalStore) CheckPutOptions(opts ...PutOption) error {
 	for _, opt := range opts {
 		if opt.Required() {
@@ -78,7 +84,7 @@ func (s *LocalStore) Open(_ context.Context, sum Sum) (io.ReadCloser, error) {
 	return os.Open(s.path(sum))
 }
 
-// Size は, sum の blob のバイト数を返す. 無ければ fs.ErrNotExist を包んだエラーを返す.
+// Size は, sum の blob のバイト数を返す. 存在しなければ fs.ErrNotExist をラップしたエラーを返す.
 func (s *LocalStore) Size(_ context.Context, sum Sum) (int64, error) {
 	fi, err := os.Stat(s.path(sum))
 	if err != nil {
@@ -87,18 +93,18 @@ func (s *LocalStore) Size(_ context.Context, sum Sum) (int64, error) {
 	return fi.Size(), nil
 }
 
-// path は, sum の blob のパスを root/sha256/<1〜2文字目>/<3〜4文字目>/<64文字全体> にする (Git LFS と同じ形). 2文字ずつ2段に分けるので, blob が約6700万件になるまで, 1つのディレクトリの中身は1024件以下に収まる. 人がファイラやターミナルで覗いた時に, 一度に並ぶ数が多くなりすぎないようにするため. ファイル名をハッシュ全体にしているのは, 見えている名前をそのまま blob の名前として使えるようにするため. "sha256" の段は, 将来ハッシュの方式を変えた時に並べて置けるようにするため.
+// path は, sum の blob のパスを root/sha256/<1〜2文字目>/<3〜4文字目>/<64文字全体> にする (Git LFS と同じ形). 2文字ずつ2階層に分けるので, blob が約6700万件になるまで, 1つのディレクトリのエントリは1024件以下に収まる. ファイラやターミナルでの閲覧時に, 1つのディレクトリ内の表示件数が過大になるのを防ぐため. ファイル名をハッシュ全体とすることで, 表示されたファイル名をそのまま blob 名として利用可能にしている. "sha256" の階層は, 将来ハッシュアルゴリズムを変更した時に共存させられるようにするため.
 func (s *LocalStore) path(sum Sum) string {
 	h := sum.String()
 	return filepath.Join(s.root, "sha256", h[0:2], h[2:4], h)
 }
 
-// mkdirAllDurable は, os.MkdirAll と同じく dir までのディレクトリを作る. 違いは, 新しく作ったディレクトリごとに親を fsync すること. これをしないと, 停電の後にディレクトリごと消え, その下に fsync したファイルも一緒に失われうる.
+// mkdirAllDurable は, os.MkdirAll と同じく dir までのディレクトリを作成する. 違いは, 新しく作成したディレクトリごとに親ディレクトリを fsync すること. これを行わないと, 停電発生時にディレクトリごと消失し, その配下で fsync したファイルも失われる可能性がある.
 func mkdirAllDurable(dir string) error {
 	info, err := os.Stat(dir)
 	if err == nil {
 		if !info.IsDir() {
-			return &os.PathError{Op: "mkdir", Path: dir, Err: errors.New("ディレクトリではないファイルがある")}
+			return &os.PathError{Op: "mkdir", Path: dir, Err: errors.New("ディレクトリではないファイルが存在する")}
 		}
 		return nil
 	}
@@ -112,7 +118,7 @@ func mkdirAllDurable(dir string) error {
 			return err
 		}
 	}
-	// 他の Put が同じディレクトリを同時に作っていることがあるので, 既にあるのはエラーにしない.
+	// 他の Put が同じディレクトリを同時に作成していることがあるので, 既に存在する場合はエラーにしない.
 	if err := os.Mkdir(dir, 0o755); err != nil && !errors.Is(err, os.ErrExist) {
 		return err
 	}
