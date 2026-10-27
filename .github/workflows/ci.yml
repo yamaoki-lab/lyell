@@ -4,6 +4,9 @@ name: CI
 
 on:
   pull_request:
+  # main に入った後にも走らせて, main にキャッシュを作る. PR が借りられるのは main のキャッシュだけで, PR 同士では借りられない.
+  push:
+    branches: [main]
 
 permissions:
   contents: read
@@ -40,6 +43,10 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod # yamaoki-lint:ignore
+          # 生成の道具は別のモジュール (tools/go.mod) にあるので, その go.sum もキャッシュの鍵に入れる.
+          cache-dependency-path: |
+            go.sum
+            tools/go.sum
       - name: gofmt
         if: matrix.os == 'ubuntu-26.04'
         run: |
