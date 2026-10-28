@@ -15,7 +15,7 @@ import (
 
 func testContent(body string) Content {
 	return Content{
-		// ミリ秒より細かい部分は切り捨てられることを確かめるため, ナノ秒まで入れておく.
+		// ミリ秒より細かい部分が切り捨てられることを確認するため, ナノ秒まで指定する.
 		CreatedAt:     time.Date(2026, 9, 28, 12, 34, 56, 789_123_456, time.UTC),
 		AuthorUser:    "user",
 		AuthorMachine: "machine",
@@ -39,7 +39,7 @@ func TestNewID_IsVersion7AndOrdered(t *testing.T) {
 		t.Errorf("UUID のバージョンの桁 = %d, want 7 (%s)", v, a)
 	}
 	if bytes.Compare(a[:], b[:]) >= 0 {
-		t.Errorf("後に作った ID が前の ID より大きくない: %s, %s", a, b)
+		t.Errorf("後に生成した ID が先の ID より大きくない: %s, %s", a, b)
 	}
 }
 
@@ -87,7 +87,7 @@ func TestCreateItem_EmptyBodyIsNotThinned(t *testing.T) {
 	s, _ := openTestStore(t)
 	ctx := context.Background()
 
-	// 空の Protobuf のメッセージは0バイトになる. nil で渡されても, 間引かれた印 (NULL) と取り違えない.
+	// 空の Protobuf のメッセージは0バイトになる. nil で渡されても, 間引かれたことを示す NULL と混同しない.
 	for _, body := range [][]byte{nil, {}} {
 		content := testContent("")
 		content.Body = body
@@ -128,9 +128,9 @@ func TestCreateItem_RejectsInvalidInputWithoutWriting(t *testing.T) {
 		kind    Kind
 		content Content
 	}{
-		{name: "知らない種類", kind: "folder", content: testContent("body")},
-		{name: "利用者が無い", kind: KindAsset, content: noUser},
-		{name: "時刻が無い", kind: KindAsset, content: noTime},
+		{name: "不明な種類", kind: "folder", content: testContent("body")},
+		{name: "利用者が空", kind: KindAsset, content: noUser},
+		{name: "記録時刻が空", kind: KindAsset, content: noTime},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -145,7 +145,7 @@ func TestCreateItem_RejectsInvalidInputWithoutWriting(t *testing.T) {
 		t.Fatalf("数を読めない: %v", err)
 	}
 	if n != 0 {
-		t.Errorf("断った CreateItem の行が %d 件残っている", n)
+		t.Errorf("拒否した CreateItem の行が %d 件残っている", n)
 	}
 }
 
@@ -172,7 +172,7 @@ func TestRevision_ParentsSurviveThinning(t *testing.T) {
 	r1 := item.Head
 	r2, r3 := ID(testID(2)), ID(testID(3))
 
-	// revision を足す関数はまだ無いので, r1 ← r2 ← r3 と繋がる revision を直接入れる.
+	// r1 ← r2 ← r3 と繋がる revision を, DB に直接挿入する. 間引く処理はまだ無いので, 後の間引きも DB を直接操作する.
 	if err := inTx(t, s, func(tx *sql.Tx) error {
 		for _, r := range []struct{ id, parent ID }{{r2, r1}, {r3, r2}} {
 			if err := insertRevision(ctx, tx, r.id, item.ID, testContent("r")); err != nil {
@@ -184,10 +184,10 @@ func TestRevision_ParentsSurviveThinning(t *testing.T) {
 		}
 		return nil
 	}); err != nil {
-		t.Fatalf("revision を入れられない: %v", err)
+		t.Fatalf("revision を挿入できない: %v", err)
 	}
 
-	// r2 を間引く. 中身の列だけが消え, ID と親が残る.
+	// r2 を間引く. 中身の列だけが削除され, ID と親は残る.
 	if _, err := s.write.Exec(`UPDATE revisions SET created_at = NULL, author_user = NULL, author_machine = NULL, blob_sha256 = NULL, body = NULL WHERE id = ?`, r2[:]); err != nil {
 		t.Fatalf("間引けない: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestRevision_ParentsSurviveThinning(t *testing.T) {
 		t.Errorf("間引いた revision の Content = %+v, want nil", thinned.Content)
 	}
 
-	// r3 から親を辿ると, 間引いた r2 を通って r1 に着く.
+	// r3 から親を辿ると, 間引いた r2 を経由して r1 に到達する.
 	var path []ID
 	for id := r3; ; {
 		rev, err := s.Revision(ctx, id)
@@ -215,11 +215,11 @@ func TestRevision_ParentsSurviveThinning(t *testing.T) {
 	}
 	want := []ID{r3, r2, r1}
 	if len(path) != len(want) || path[0] != want[0] || path[1] != want[1] || path[2] != want[2] {
-		t.Errorf("辿った道 = %v, want %v", path, want)
+		t.Errorf("辿った経路 = %v, want %v", path, want)
 	}
 }
 
-// newTestItem は, body を中身にした asset の NewItem を作る.
+// newTestItem は, body を中身とする asset の NewItem を作成する.
 func newTestItem(body string) NewItem {
 	return NewItem{Kind: KindAsset, Content: testContent(body), Data: strings.NewReader(body)}
 }

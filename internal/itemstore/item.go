@@ -14,10 +14,10 @@ import (
 	"github.com/yamaoki-lab/lyell/internal/blobstore"
 )
 
-// ID は item と revision の ID で, UUIDv7 (16バイト). 先頭に作った時刻 (ミリ秒) が入るので, 作った順に並ぶ.
+// ID は, item と revision の ID で, UUIDv7 (16バイト). 先頭に生成時刻 (ミリ秒) を含むので, 生成順に並ぶ.
 type ID [16]byte
 
-// NewID は, 今の時刻から新しい ID を作る.
+// NewID は, 現在時刻から新しい ID を生成する.
 func NewID() (ID, error) {
 	u, err := uuid.NewV7()
 	if err != nil {
@@ -26,18 +26,18 @@ func NewID() (ID, error) {
 	return ID(u), nil
 }
 
-// String は, ハイフン区切りの見慣れた形 (0190a0b0-c0d0-7000-8000-000000000001) を返す.
+// String は, ハイフン区切りの標準の表記 (0190a0b0-c0d0-7000-8000-000000000001) を返す.
 func (id ID) String() string {
 	return uuid.UUID(id).String()
 }
 
-// Kind は item の種類. 作った後は変わらない.
+// Kind は, item の種類. 作成後は変わらない.
 type Kind string
 
 const (
-	// KindAsset は, 中身 (blob) がバイト列そのものの item.
+	// KindAsset は, 中身 (blob) がバイト列そのものである item.
 	KindAsset Kind = "asset"
-	// KindCollection は, 中身 (blob) が他の item への参照の一覧の item.
+	// KindCollection は, 中身 (blob) が, 他の item への参照の一覧である item.
 	KindCollection Kind = "collection"
 )
 
@@ -45,21 +45,21 @@ const (
 type Item struct {
 	ID   ID
 	Kind Kind
-	Head ID // 今指している revision
+	Head ID // 現在指している revision
 }
 
-// Content は, revision の中身. 間引くと全て消え, ID と親だけの骨格が残る.
+// Content は, revision の中身. 間引くと全て削除され, ID と親だけが残る.
 type Content struct {
-	// CreatedAt は, revision を記録した時刻. DB にはミリ秒で持つので, それより細かい部分は切り捨てる. 中身が表す本来の日時は Body の側に持つ.
+	// CreatedAt は, revision を記録した時刻. DB にはミリ秒単位で保存するので, それより細かい部分は切り捨てる. 中身が表す本来の日時は Body に持たせる.
 	CreatedAt time.Time
-	// AuthorUser と AuthorMachine は, 記録した利用者と機体. どちらも必ず入れる. 認証の無い経路からの記録は, 両方 "anonymous" にする.
+	// AuthorUser と AuthorMachine は, 記録した利用者とマシン. どちらも必須. 認証を経ない経路からの記録では, 両方を "anonymous" にする.
 	AuthorUser    string
 	AuthorMachine string
-	// Blob は, 中身のバイト列 (blob) の SHA-256. 記録した後は, バイト列を手元に持っているか (転送から外した等) とは別になる. 持っているかは blobstore に聞く.
+	// Blob は, 中身のバイト列 (blob) の SHA-256. 記録した後は, バイト列が手元にあるか (転送の対象から外した場合等) とは独立している. 手元にあるかは blobstore に問い合わせる.
 	Blob blobstore.Sum
-	// BlobSize は, blob のバイト数. 記録する時は itemstore が blobstore から入れるので, 渡した値は使わない.
+	// BlobSize は, blob のバイト数. 記録時は itemstore が blobstore から取得した値を入れるので, 渡された値は使用しない.
 	BlobSize int64
-	// Body は, revision の情報 (名前, メモ, content profile 等) を Protobuf で表したもの. itemstore は中身を解釈せず, 受け取ったバイト列をそのまま持つ. 空の Protobuf のメッセージは0バイトになるので, 空でもよい.
+	// Body は, revision の情報 (名前, メモ, content profile 等) を Protobuf で表したもの. itemstore は中身を解釈せず, 受け取ったバイト列をそのまま保存する. 空の Protobuf のメッセージは0バイトになるので, 空でもよい.
 	Body []byte
 }
 
@@ -67,30 +67,30 @@ type Content struct {
 type Revision struct {
 	ID      ID
 	ItemID  ID
-	Parents []ID // 1つ前の revision. 最初の revision は持たない. 統合では, 別の item の revision も親になる
+	Parents []ID // 1つ前の revision. 最初の revision には無い. 統合では, 別の item の revision も親になる
 	// Content は中身. 間引かれていれば nil.
 	Content *Content
 }
 
-// ErrNotFound は, 指定した item や revision が無い時のエラー.
-var ErrNotFound = errors.New("itemstore: 見つからない")
+// ErrNotFound は, 指定した item や revision が存在しない時のエラー.
+var ErrNotFound = errors.New("itemstore: 存在しない")
 
-// ErrBlobNotFound は, Data を渡さずに記録しようとした時に, Content.Blob の blob が置かれていないことを表す.
-var ErrBlobNotFound = errors.New("itemstore: blob が置かれていない")
+// ErrBlobNotFound は, Data を渡さずに記録しようとした時に, Content.Blob の blob が存在しないことを表す.
+var ErrBlobNotFound = errors.New("itemstore: blob が存在しない")
 
-// NewItem は, CreateItem で作る item の説明. 項目を足しても呼び出し側を直さずに済むよう, 引数を並べずにこの形で受け取る. 書かなかった項目は空の値になる.
+// NewItem は, CreateItem で作成する item の内容. フィールドを追加しても呼び出し側を変更せずに済むよう, 引数を並べずに構造体で受け取る. 指定しなかったフィールドはゼロ値になる.
 type NewItem struct {
 	Kind    Kind
 	Content Content // 最初の revision の中身
-	// Data は, 中身のバイト列 (blob). SHA-256 が Content.Blob と合わなければ何も記録しない. nil なら, blob は先に置いてあるものとし, 無ければ ErrBlobNotFound を返す (API で blob を RPC の外で先に送った時).
+	// Data は, 中身のバイト列 (blob). SHA-256 が Content.Blob と一致しなければ, 何も記録しない. nil の場合は blob が保存済みであるとみなし, 存在しなければ ErrBlobNotFound を返す (API で, blob を RPC とは別に先に送った場合).
 	Data io.Reader
-	// PutOptions は, blob を書く時の選択肢 (置き場の指定等). 無ければ置き場の既定に従う.
+	// PutOptions は, blob を書き込む時のオプション (保存先の指定等). 無ければ保存先の既定に従う.
 	PutOptions []blobstore.PutOption
 }
 
-// CreateItem は, item を最初の revision と一緒に作る.
+// CreateItem は, item を最初の revision と一緒に作成する.
 //
-// blob を先に書き (書き終えるとディスクに届いている), その後で item と revision を1つのトランザクションで記録する. 逆の順にすると, 記録した後に落ちた時に, 無い blob を指す revision が残る. この順なら, 途中で落ちても孤立した blob が残るだけで, 後の GC で回収できる.
+// 先に blob を書き込み (書き込みが完了した時点でディスクに永続化されている), その後で item と revision を1つのトランザクションで記録する. 逆の順にすると, 記録した後にクラッシュした場合に, 存在しない blob を指す revision が残る. この順なら, 途中でクラッシュしても孤立した blob が残るだけで, 後の GC で回収できる.
 func (s *Store) CreateItem(ctx context.Context, n NewItem) (Item, error) {
 	kind, content := n.Kind, n.Content
 	if err := kind.validate(); err != nil {
@@ -119,27 +119,27 @@ func (s *Store) CreateItem(ctx context.Context, n NewItem) (Item, error) {
 	}
 	defer func() { _ = tx.Rollback() }() // Commit の後は何もしない
 
-	// items と revisions は互いを指すが, その検査はコミットの時なので, 入れる順は問わない.
+	// items と revisions は互いを参照するが, 外部キーの検査はコミット時に行われるので, 挿入の順序は問わない.
 	if _, err := tx.ExecContext(ctx, "INSERT INTO items (id, kind, head) VALUES (?, ?, ?)", itemID[:], string(kind), revID[:]); err != nil {
 		return Item{}, err
 	}
 	if err := insertRevision(ctx, tx, revID, itemID, content); err != nil {
 		return Item{}, err
 	}
-	// 外部キーの検査はここで行われるので, このエラーを捨てると, 書けたつもりで何も残らない.
+	// 外部キーの検査はここで行われるので, このエラーを無視すると, 書き込めたと誤認したまま何も残らない.
 	if err := tx.Commit(); err != nil {
 		return Item{}, err
 	}
 	return Item{ID: itemID, Kind: kind, Head: revID}, nil
 }
 
-// placeBlob は, 記録する前に blob が置かれていることを確かめ, その大きさを返す. data があれば先に書き, nil なら置いてあるものを使う. CreateItem と CommitRevision で共通.
+// placeBlob は, 記録の前に blob が存在することを確認し, そのサイズを返す. data があれば先に書き込み, nil なら保存済みの blob を使う. CreateItem と CommitRevision で共通の処理.
 //
-// 置いてあることを確かめてから記録するまでの間に, blob が消されることは考えない. 誰からも指されない blob を消す GC を作る時に, 置いてすぐの blob を消さない猶予を設ける.
+// 確認してから記録するまでの間に, blob が削除されることは考慮しない. どこからも参照されない blob を削除する GC を実装する時に, 作成直後の blob を削除しない猶予期間を設ける.
 func (s *Store) placeBlob(ctx context.Context, sum blobstore.Sum, data io.Reader, opts []blobstore.PutOption) (int64, error) {
 	if data != nil {
 		if err := s.blobs.Put(ctx, sum, data, opts...); err != nil {
-			return 0, fmt.Errorf("blob を書けない: %w", err)
+			return 0, fmt.Errorf("blob を書き込めない: %w", err)
 		}
 	}
 	size, err := s.blobs.Size(ctx, sum)
@@ -147,13 +147,13 @@ func (s *Store) placeBlob(ctx context.Context, sum blobstore.Sum, data io.Reader
 		return 0, fmt.Errorf("blob %s: %w", sum, ErrBlobNotFound)
 	}
 	if err != nil {
-		return 0, fmt.Errorf("blob %s の大きさを読めない: %w", sum, err)
+		return 0, fmt.Errorf("blob %s のサイズを取得できない: %w", sum, err)
 	}
 	return size, nil
 }
 
 func insertRevision(ctx context.Context, tx *sql.Tx, id, itemID ID, c Content) error {
-	// Body が nil だと NULL (間引かれた印) として入ってしまうので, 空でも必ず長さ0のバイト列として渡す.
+	// Body が nil だと NULL (間引かれたことを示す値) として挿入されるので, 空の場合も必ず長さ0のバイト列として渡す.
 	body := c.Body
 	if body == nil {
 		body = []byte{}
@@ -165,7 +165,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 	return err
 }
 
-// Item は, id の item を返す. 無ければ ErrNotFound を返す.
+// Item は, id の item を返す. 存在しなければ ErrNotFound を返す.
 func (s *Store) Item(ctx context.Context, id ID) (Item, error) {
 	var (
 		kind string
@@ -185,9 +185,9 @@ func (s *Store) Item(ctx context.Context, id ID) (Item, error) {
 	return item, nil
 }
 
-// Revision は, id の revision を, 親の一覧と一緒に返す. 間引かれていれば Content は nil になるが, 親は辿れる. 無ければ ErrNotFound を返す.
+// Revision は, id の revision を, 親の一覧と一緒に返す. 間引かれていれば Content は nil になるが, 親は辿れる. 存在しなければ ErrNotFound を返す.
 func (s *Store) Revision(ctx context.Context, id ID) (Revision, error) {
-	// 行と親の一覧を同じ時点のものとして読むため, 1つの読み取りのトランザクションにまとめる.
+	// 行と親の一覧を同じ時点のスナップショットから読むため, 1つの読み取り専用のトランザクションで読む.
 	tx, err := s.read.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return Revision{}, err
@@ -201,7 +201,7 @@ func (s *Store) Revision(ctx context.Context, id ID) (Revision, error) {
 		blob, body                []byte
 		thinned                   bool
 	)
-	// 長さ0の BLOB は, ドライバによっては nil として読める. 間引かれたかどうかは body の nil ではなく, IS NULL で DB に聞く.
+	// 長さ0の BLOB は, ドライバによっては nil として読み取られる. 間引かれたかどうかは, body が nil かではなく, IS NULL で DB に問い合わせて判定する.
 	err = tx.QueryRowContext(ctx, `
 SELECT item_id, created_at, author_user, author_machine, blob_sha256, blob_size, body, body IS NULL
 FROM revisions WHERE id = ?`, id[:]).Scan(&itemID, &createdAt, &authorUser, &authorMachine, &blob, &blobSize, &body, &thinned)
@@ -216,7 +216,7 @@ FROM revisions WHERE id = ?`, id[:]).Scan(&itemID, &createdAt, &authorUser, &aut
 	if err := scanID(itemID, &rev.ItemID); err != nil {
 		return Revision{}, err
 	}
-	// 間引かれていない revision は, 中身の列を全て持つことを表の CHECK が保証している.
+	// 間引かれていない revision が中身の列を全て持つことは, テーブルの CHECK 制約が保証している.
 	if !thinned {
 		if body == nil {
 			body = []byte{}
@@ -259,7 +259,7 @@ FROM revisions WHERE id = ?`, id[:]).Scan(&itemID, &createdAt, &authorUser, &aut
 
 func scanID(raw []byte, id *ID) error {
 	if len(raw) != len(id) {
-		return fmt.Errorf("ID が %d バイト (16バイトのはず)", len(raw))
+		return fmt.Errorf("ID が %d バイト (16バイトであるべき)", len(raw))
 	}
 	copy(id[:], raw)
 	return nil
@@ -270,15 +270,15 @@ func (k Kind) validate() error {
 	case KindAsset, KindCollection:
 		return nil
 	}
-	return fmt.Errorf("知らない item の種類: %q", k)
+	return fmt.Errorf("不明な item の種類: %q", k)
 }
 
 func (c Content) validate() error {
 	if c.CreatedAt.IsZero() {
-		return errors.New("記録した時刻 (CreatedAt) が無い")
+		return errors.New("記録時刻 (CreatedAt) が指定されていない")
 	}
 	if c.AuthorUser == "" || c.AuthorMachine == "" {
-		return errors.New("記録した利用者と機体 (AuthorUser, AuthorMachine) は両方要る. 認証の無い経路なら anonymous にする")
+		return errors.New("記録した利用者とマシン (AuthorUser, AuthorMachine) は両方必須. 認証を経ない経路では anonymous にする")
 	}
 	return nil
 }

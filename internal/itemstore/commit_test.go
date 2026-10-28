@@ -35,14 +35,14 @@ func TestCommitRevision_AdvancesHead(t *testing.T) {
 		t.Fatalf("Item() error = %v, want nil", err)
 	}
 	if got.Head != r2 {
-		t.Errorf("head = %s, want 足した revision %s", got.Head, r2)
+		t.Errorf("head = %s, want 追加した revision %s", got.Head, r2)
 	}
 	rev, err := s.Revision(ctx, r2)
 	if err != nil {
 		t.Fatalf("Revision() error = %v, want nil", err)
 	}
 	if len(rev.Parents) != 1 || rev.Parents[0] != item.Head {
-		t.Errorf("足した revision の親 = %v, want [%s]", rev.Parents, item.Head)
+		t.Errorf("追加した revision の親 = %v, want [%s]", rev.Parents, item.Head)
 	}
 }
 
@@ -60,12 +60,12 @@ func TestCommitRevision_RejectsStaleHeadWithoutWriting(t *testing.T) {
 	}
 	before := countRevisions(t, s)
 
-	// head は r2 に進んでいるのに, 古い r1 を前提にして足そうとする.
+	// head は r2 に進んでいるが, 古い r1 を前提として追加しようとする.
 	_, err = s.CommitRevision(ctx, NewRevision{ItemID: item.ID, From: r1, Parents: []ID{r1}, Content: testContent("stale"), Data: strings.NewReader("stale")})
 	if !errors.Is(err, ErrNotFastForward) {
 		t.Fatalf("古い head を前提にした CommitRevision() error = %v, want ErrNotFastForward", err)
 	}
-	// 呼び出し側が読み直さずに統合へ回せるよう, 断った時点の head が分かる.
+	// 呼び出し側が読み直さずに統合の処理へ進めるよう, 拒否した時点の head を取得できる.
 	var nff *NotFastForwardError
 	if !errors.As(err, &nff) {
 		t.Fatalf("error = %T, want *NotFastForwardError", err)
@@ -78,7 +78,7 @@ func TestCommitRevision_RejectsStaleHeadWithoutWriting(t *testing.T) {
 		t.Errorf("head = %s, want 動かずに %s", got.Head, r2)
 	}
 	if after := countRevisions(t, s); after != before {
-		t.Errorf("断った時の revision の数 = %d, want %d (残らない)", after, before)
+		t.Errorf("拒否した時の revision の数 = %d, want %d (残らない)", after, before)
 	}
 }
 
@@ -90,7 +90,7 @@ func TestCommitRevision_OnlyOneOfConcurrentWritersWins(t *testing.T) {
 		t.Fatalf("CreateItem() error = %v, want nil", err)
 	}
 
-	// 同じ head を前提にした書き込みを, 同時に何本も走らせる.
+	// 同じ head を前提とした書き込みを, 複数同時に実行する.
 	const writers = 8
 	var (
 		wg    sync.WaitGroup
@@ -122,10 +122,10 @@ func TestCommitRevision_OnlyOneOfConcurrentWritersWins(t *testing.T) {
 		}
 	}
 	if won != 1 || lost != writers-1 {
-		t.Errorf("通った数 = %d, 断られた数 = %d, want 1, %d", won, lost, writers-1)
+		t.Errorf("成功した数 = %d, 拒否された数 = %d, want 1, %d", won, lost, writers-1)
 	}
 	if n := countRevisions(t, s); n != 2 {
-		t.Errorf("revision の数 = %d, want 2 (最初と, 通った1つ)", n)
+		t.Errorf("revision の数 = %d, want 2 (最初の revision と, 成功した1つ)", n)
 	}
 }
 
@@ -163,10 +163,10 @@ func TestCommitRevision_RejectsBadInput(t *testing.T) {
 		parents []ID
 		want    error
 	}{
-		{name: "親を書いたのに前提の head が無い", itemID: item.ID, from: item.Head, parents: []ID{other}},
-		{name: "親が重なっている", itemID: item.ID, from: item.Head, parents: []ID{item.Head, item.Head}},
-		{name: "無い revision を親にする", itemID: item.ID, from: item.Head, parents: []ID{item.Head, other}},
-		{name: "無い item", itemID: other, from: item.Head, parents: []ID{item.Head}},
+		{name: "親を指定したが前提の head が含まれていない", itemID: item.ID, from: item.Head, parents: []ID{other}},
+		{name: "親が重複している", itemID: item.ID, from: item.Head, parents: []ID{item.Head, item.Head}},
+		{name: "存在しない revision を親にする", itemID: item.ID, from: item.Head, parents: []ID{item.Head, other}},
+		{name: "存在しない item", itemID: other, from: item.Head, parents: []ID{item.Head}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -175,7 +175,7 @@ func TestCommitRevision_RejectsBadInput(t *testing.T) {
 				t.Errorf("CommitRevision() error = nil, want error")
 			}
 			if after := countRevisions(t, s); after != before {
-				t.Errorf("断った時の revision の数 = %d, want %d", after, before)
+				t.Errorf("拒否した時の revision の数 = %d, want %d", after, before)
 			}
 		})
 	}
@@ -189,7 +189,7 @@ func TestCommitRevision_EmptyParentsMeansFastForwardFromHead(t *testing.T) {
 		t.Fatalf("CreateItem() error = %v, want nil", err)
 	}
 
-	// Parents を書かなければ, From だけが親になる.
+	// Parents を指定しなければ, From だけが親になる.
 	r2, err := s.CommitRevision(ctx, NewRevision{ItemID: item.ID, From: item.Head, Content: testContent("r2"), Data: strings.NewReader("r2")})
 	if err != nil {
 		t.Fatalf("CommitRevision() error = %v, want nil", err)
@@ -203,26 +203,26 @@ func TestCommitRevision_EmptyParentsMeansFastForwardFromHead(t *testing.T) {
 	}
 }
 
-// API では, blob を RPC の外で先に置き, 記録の時は SHA-256 だけを渡す. その時 Data は nil になる.
+// API では, blob を RPC とは別に先に保存し, 記録時は SHA-256 だけを渡す. その場合 Data は nil になる.
 func TestCreateItem_WithoutDataUsesPlacedBlob(t *testing.T) {
 	s, _ := openTestStore(t)
 	ctx := context.Background()
 	content := testContent("placed")
 
-	// 置かれていない blob を指して作ろうとしても, 何も残らない. 残すと, 無い blob を指す revision ができる.
+	// 存在しない blob を指して作成しようとしても, 何も残らない. 残すと, 存在しない blob を指す revision ができてしまう.
 	if _, err := s.CreateItem(ctx, NewItem{Kind: KindAsset, Content: content}); !errors.Is(err, ErrBlobNotFound) {
 		t.Fatalf("blob の無い CreateItem() error = %v, want ErrBlobNotFound", err)
 	}
 	if n := countRows(t, s); n != 0 {
-		t.Errorf("断った後に行が %d 件ある, want 0", n)
+		t.Errorf("拒否した後に行が %d 件ある, want 0", n)
 	}
 
 	if err := s.blobs.Put(ctx, content.Blob, strings.NewReader("placed")); err != nil {
-		t.Fatalf("blob を置けない: %v", err)
+		t.Fatalf("blob を保存できない: %v", err)
 	}
 	item, err := s.CreateItem(ctx, NewItem{Kind: KindAsset, Content: content})
 	if err != nil {
-		t.Fatalf("置いた blob を指す CreateItem() error = %v, want nil", err)
+		t.Fatalf("保存した blob を指す CreateItem() error = %v, want nil", err)
 	}
 	rev, err := s.Revision(ctx, item.Head)
 	if err != nil {
@@ -247,24 +247,24 @@ func TestCommitRevision_WithoutDataUsesPlacedBlob(t *testing.T) {
 		t.Fatalf("blob の無い CommitRevision() error = %v, want ErrBlobNotFound", err)
 	}
 	if got, _ := s.Item(ctx, item.ID); got.Head != item.Head {
-		t.Errorf("断った後の head = %s, want 動かずに %s", got.Head, item.Head)
+		t.Errorf("拒否した後の head = %s, want 動かずに %s", got.Head, item.Head)
 	}
 	if after := countRevisions(t, s); after != before {
-		t.Errorf("断った後の revision の数 = %d, want %d", after, before)
+		t.Errorf("拒否した後の revision の数 = %d, want %d", after, before)
 	}
 
 	if err := s.blobs.Put(ctx, content.Blob, strings.NewReader("r2")); err != nil {
-		t.Fatalf("blob を置けない: %v", err)
+		t.Fatalf("blob を保存できない: %v", err)
 	}
 	r2, err := s.CommitRevision(ctx, NewRevision{ItemID: item.ID, From: item.Head, Content: content})
 	if err != nil {
-		t.Fatalf("置いた blob を指す CommitRevision() error = %v, want nil", err)
+		t.Fatalf("保存した blob を指す CommitRevision() error = %v, want nil", err)
 	}
 	rev, err := s.Revision(ctx, r2)
 	if err != nil {
 		t.Fatalf("Revision() error = %v, want nil", err)
 	}
 	if rev.Content.BlobSize != int64(len("r2")) {
-		t.Errorf("記録した blob の大きさ = %d, want %d", rev.Content.BlobSize, len("r2"))
+		t.Errorf("記録した blob のサイズ = %d, want %d", rev.Content.BlobSize, len("r2"))
 	}
 }
