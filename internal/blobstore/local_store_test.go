@@ -43,7 +43,7 @@ func TestLocalStore_SizeReflectsPut(t *testing.T) {
 	store := NewLocalStore(t.TempDir())
 	ctx := context.Background()
 
-	// Store.Exists は, 無いことを fs.ErrNotExist で見分ける. 他のエラーと混ざると, 無い blob を "読めない" として扱ってしまう.
+	// Store.Exists は, 存在しないことを fs.ErrNotExist で判別する. 他のエラーと区別できないと, 存在しない blob を "読み取れない" として扱ってしまう.
 	if _, err := store.Size(ctx, sumOf("hello")); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("Put の前の Size() error = %v, want fs.ErrNotExist", err)
 	}
@@ -83,7 +83,25 @@ func TestLocalStore_PutPlacesBlobUnderSHA256Dir(t *testing.T) {
 	}
 }
 
-// failingReader は, remaining の分は読めるが, その後は必ずエラーになる io.Reader. 書き込みの途中で失敗した状況を再現する.
+func TestLocalStore_PutPlacesBlobReadOnly(t *testing.T) {
+	store := NewLocalStore(t.TempDir())
+	sum := sumOf("hello")
+
+	if err := store.Put(context.Background(), sum, strings.NewReader("hello")); err != nil {
+		t.Fatalf("Put() error = %v, want nil", err)
+	}
+
+	// Windows の Go は, 読み取り専用の属性があるファイルを 0444, 無いファイルを 0666 と報告するので, どの OS でも同じ値で比べられる.
+	fi, err := os.Stat(store.path(sum))
+	if err != nil {
+		t.Fatalf("Stat() error = %v, want nil", err)
+	}
+	if got := fi.Mode().Perm(); got != 0o444 {
+		t.Errorf("blob のパーミッション = %#o, want 0444", got)
+	}
+}
+
+// failingReader は, remaining の分は読み取れるが, その後は必ずエラーを返す io.Reader. 書き込みの途中で失敗した状況を再現する.
 type failingReader struct {
 	remaining []byte
 }
@@ -112,7 +130,7 @@ func TestLocalStore_Put_FailureLeavesNoPartialFileAtFinalPath(t *testing.T) {
 		t.Errorf("final path exists after failed Put (statErr = %v), want os.ErrNotExist", statErr)
 	}
 
-	// 一時的な置き場にゴミが残っても実害は無いが, 後片付けまでされていることも確かめる.
+	// 一時ディレクトリに不要なファイルが残っても実害は無いが, 削除されていることも確かめる.
 	entries, err := os.ReadDir(filepath.Join(root, ".tmp"))
 	if err != nil {
 		t.Fatalf("ReadDir(.tmp) error = %v, want nil", err)
