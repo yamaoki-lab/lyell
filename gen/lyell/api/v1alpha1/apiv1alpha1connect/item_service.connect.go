@@ -46,16 +46,16 @@ const (
 
 // ItemServiceClient is a client for the lyell.api.v1alpha1.ItemService service.
 type ItemServiceClient interface {
-	// CreateItem は, item を, 置いてある blob を指す最初の revision と一緒に作る. 今は asset だけを作れる.
-	// blob が置かれていなければ, FAILED_PRECONDITION を返す.
+	// CreateItem は, item を, 保存済みの blob を指す最初の revision と一緒に作成する. 現在は asset だけを作成できる.
+	// blob が存在しなければ, FAILED_PRECONDITION を返す.
 	CreateItem(context.Context, *connect.Request[v1alpha1.CreateItemRequest]) (*connect.Response[v1alpha1.CreateItemResponse], error)
-	// GetItem は, item を返す. 無ければ NOT_FOUND を返す.
+	// GetItem は, item を返す. 存在しなければ NOT_FOUND を返す.
 	GetItem(context.Context, *connect.Request[v1alpha1.GetItemRequest]) (*connect.Response[v1alpha1.GetItemResponse], error)
-	// GetRevision は, revision を, 親の一覧と一緒に返す. 無ければ NOT_FOUND を返す.
+	// GetRevision は, revision を, 親の一覧と一緒に返す. 存在しなければ NOT_FOUND を返す.
 	GetRevision(context.Context, *connect.Request[v1alpha1.GetRevisionRequest]) (*connect.Response[v1alpha1.GetRevisionResponse], error)
-	// CommitRevision は, item に revision を足し, item の head をそれへ進める. 早送りだけを受け付ける.
-	// head が expected_head から動いていたら, 何も残さずに ABORTED を返し, 詳細に HeadMoved を付ける.
-	// blob が置かれていなければ, FAILED_PRECONDITION を返す.
+	// CommitRevision は, item に revision を追加し, item の head をその revision へ進める. 早送りだけを受け付ける.
+	// head が expected_head から動いていたら, 何も記録せずに ABORTED を返し, 詳細に HeadMoved を付ける.
+	// blob が存在しなければ, FAILED_PRECONDITION を返す.
 	CommitRevision(context.Context, *connect.Request[v1alpha1.CommitRevisionRequest]) (*connect.Response[v1alpha1.CommitRevisionResponse], error)
 }
 
@@ -129,16 +129,16 @@ func (c *itemServiceClient) CommitRevision(ctx context.Context, req *connect.Req
 
 // ItemServiceHandler is an implementation of the lyell.api.v1alpha1.ItemService service.
 type ItemServiceHandler interface {
-	// CreateItem は, item を, 置いてある blob を指す最初の revision と一緒に作る. 今は asset だけを作れる.
-	// blob が置かれていなければ, FAILED_PRECONDITION を返す.
+	// CreateItem は, item を, 保存済みの blob を指す最初の revision と一緒に作成する. 現在は asset だけを作成できる.
+	// blob が存在しなければ, FAILED_PRECONDITION を返す.
 	CreateItem(context.Context, *connect.Request[v1alpha1.CreateItemRequest]) (*connect.Response[v1alpha1.CreateItemResponse], error)
-	// GetItem は, item を返す. 無ければ NOT_FOUND を返す.
+	// GetItem は, item を返す. 存在しなければ NOT_FOUND を返す.
 	GetItem(context.Context, *connect.Request[v1alpha1.GetItemRequest]) (*connect.Response[v1alpha1.GetItemResponse], error)
-	// GetRevision は, revision を, 親の一覧と一緒に返す. 無ければ NOT_FOUND を返す.
+	// GetRevision は, revision を, 親の一覧と一緒に返す. 存在しなければ NOT_FOUND を返す.
 	GetRevision(context.Context, *connect.Request[v1alpha1.GetRevisionRequest]) (*connect.Response[v1alpha1.GetRevisionResponse], error)
-	// CommitRevision は, item に revision を足し, item の head をそれへ進める. 早送りだけを受け付ける.
-	// head が expected_head から動いていたら, 何も残さずに ABORTED を返し, 詳細に HeadMoved を付ける.
-	// blob が置かれていなければ, FAILED_PRECONDITION を返す.
+	// CommitRevision は, item に revision を追加し, item の head をその revision へ進める. 早送りだけを受け付ける.
+	// head が expected_head から動いていたら, 何も記録せずに ABORTED を返し, 詳細に HeadMoved を付ける.
+	// blob が存在しなければ, FAILED_PRECONDITION を返す.
 	CommitRevision(context.Context, *connect.Request[v1alpha1.CommitRevisionRequest]) (*connect.Response[v1alpha1.CommitRevisionResponse], error)
 }
 

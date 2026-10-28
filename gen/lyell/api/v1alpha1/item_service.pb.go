@@ -21,12 +21,12 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// CreateItemRequest は, CreateItem に渡す値.
+// CreateItemRequest は, CreateItem のリクエスト.
 type CreateItemRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// kind は item の種類. 今は ITEM_KIND_ASSET だけを受け付ける.
+	// kind は item の種類. 現在は ITEM_KIND_ASSET だけを受け付ける.
 	Kind ItemKind `protobuf:"varint,1,opt,name=kind,proto3,enum=lyell.api.v1alpha1.ItemKind" json:"kind,omitempty"`
-	// blob_sha256 は, 最初の revision の中身の SHA-256 (小文字の16進の64文字). 先に置いておく.
+	// blob_sha256 は, 最初の revision の中身の SHA-256 (小文字の16進数64文字). 先に保存しておく.
 	BlobSha256    string `protobuf:"bytes,2,opt,name=blob_sha256,json=blobSha256,proto3" json:"blob_sha256,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -76,12 +76,12 @@ func (x *CreateItemRequest) GetBlobSha256() string {
 	return ""
 }
 
-// CreateItemResponse は, CreateItem の結果.
+// CreateItemResponse は, CreateItem のレスポンス.
 type CreateItemResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// item は, 作った item.
+	// item は, 作成した item.
 	Item *Item `protobuf:"bytes,1,opt,name=item,proto3" json:"item,omitempty"`
-	// revision は, 作った最初の revision.
+	// revision は, 作成した最初の revision.
 	Revision      *Revision `protobuf:"bytes,2,opt,name=revision,proto3" json:"revision,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -131,10 +131,10 @@ func (x *CreateItemResponse) GetRevision() *Revision {
 	return nil
 }
 
-// GetItemRequest は, GetItem に渡す値.
+// GetItemRequest は, GetItem のリクエスト.
 type GetItemRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// id は, 読む item の ID.
+	// id は, 読み取る item の ID.
 	Id            string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -177,10 +177,10 @@ func (x *GetItemRequest) GetId() string {
 	return ""
 }
 
-// GetItemResponse は, GetItem の結果.
+// GetItemResponse は, GetItem のレスポンス.
 type GetItemResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// item は, 読んだ item.
+	// item は, 読み取った item.
 	Item          *Item `protobuf:"bytes,1,opt,name=item,proto3" json:"item,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -223,10 +223,10 @@ func (x *GetItemResponse) GetItem() *Item {
 	return nil
 }
 
-// GetRevisionRequest は, GetRevision に渡す値.
+// GetRevisionRequest は, GetRevision のリクエスト.
 type GetRevisionRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// id は, 読む revision の ID.
+	// id は, 読み取る revision の ID.
 	Id            string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -269,10 +269,10 @@ func (x *GetRevisionRequest) GetId() string {
 	return ""
 }
 
-// GetRevisionResponse は, GetRevision の結果.
+// GetRevisionResponse は, GetRevision のレスポンス.
 type GetRevisionResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// revision は, 読んだ revision.
+	// revision は, 読み取った revision.
 	Revision      *Revision `protobuf:"bytes,1,opt,name=revision,proto3" json:"revision,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -315,16 +315,16 @@ func (x *GetRevisionResponse) GetRevision() *Revision {
 	return nil
 }
 
-// CommitRevisionRequest は, CommitRevision に渡す値.
+// CommitRevisionRequest は, CommitRevision のリクエスト.
 type CommitRevisionRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// item_id は, revision を足す item の ID.
+	// item_id は, revision を追加する item の ID.
 	ItemId string `protobuf:"bytes,1,opt,name=item_id,json=itemId,proto3" json:"item_id,omitempty"`
-	// expected_head は, 呼ぶ側が前提にしている今の head. 今の head と違えば ABORTED になる.
+	// expected_head は, 呼び出し側が前提としている現在の head. 現在の head と異なれば ABORTED になる.
 	ExpectedHead string `protobuf:"bytes,2,opt,name=expected_head,json=expectedHead,proto3" json:"expected_head,omitempty"`
-	// parents は, 新しい revision の親. 空なら expected_head だけを親にする (一番よくある早送り). 書く時は expected_head を必ず含める.
+	// parents は, 新しい revision の親. 空なら expected_head だけを親にする (最も一般的な早送り). 指定する場合は expected_head を必ず含める.
 	Parents []string `protobuf:"bytes,3,rep,name=parents,proto3" json:"parents,omitempty"`
-	// blob_sha256 は, 新しい revision の中身の SHA-256 (小文字の16進の64文字). 先に置いておく.
+	// blob_sha256 は, 新しい revision の中身の SHA-256 (小文字の16進数64文字). 先に保存しておく.
 	BlobSha256    string `protobuf:"bytes,4,opt,name=blob_sha256,json=blobSha256,proto3" json:"blob_sha256,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -388,10 +388,10 @@ func (x *CommitRevisionRequest) GetBlobSha256() string {
 	return ""
 }
 
-// CommitRevisionResponse は, CommitRevision の結果.
+// CommitRevisionResponse は, CommitRevision のレスポンス.
 type CommitRevisionResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// revision は, 足した revision. item の head は, これの ID に進んでいる.
+	// revision は, 追加した revision. item の head は, この revision の ID に進んでいる.
 	Revision      *Revision `protobuf:"bytes,1,opt,name=revision,proto3" json:"revision,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -434,10 +434,10 @@ func (x *CommitRevisionResponse) GetRevision() *Revision {
 	return nil
 }
 
-// HeadMoved は, CommitRevision が ABORTED を返す時に付ける詳細. 呼ぶ側は, 読み直さずに今の head を知り, 統合に回せる.
+// HeadMoved は, CommitRevision が ABORTED を返す時に付ける詳細. 呼び出し側は, 読み直さずに現在の head を取得し, 統合の処理へ進める.
 type HeadMoved struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// current_head は, 断った時点の item の head.
+	// current_head は, 拒否した時点の item の head.
 	CurrentHead   string `protobuf:"bytes,1,opt,name=current_head,json=currentHead,proto3" json:"current_head,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

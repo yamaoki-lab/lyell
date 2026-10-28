@@ -26,11 +26,11 @@ const (
 type ItemKind int32
 
 const (
-	// ITEM_KIND_UNSPECIFIED は, 種類が書かれていないこと. 受け取ったら断る.
+	// ITEM_KIND_UNSPECIFIED は, 種類が指定されていないこと. 受け取った場合は拒否する.
 	ItemKind_ITEM_KIND_UNSPECIFIED ItemKind = 0
-	// ITEM_KIND_ASSET は, 中身 (blob) がバイト列そのものの item.
+	// ITEM_KIND_ASSET は, 中身 (blob) がバイト列そのものである item.
 	ItemKind_ITEM_KIND_ASSET ItemKind = 1
-	// ITEM_KIND_COLLECTION は, 中身が他の item への参照の一覧の item. 一覧の形が決まるまで, 作れない.
+	// ITEM_KIND_COLLECTION は, 中身が, 他の item への参照の一覧である item. 一覧の形式が決まるまでは作成できない.
 	ItemKind_ITEM_KIND_COLLECTION ItemKind = 2
 )
 
@@ -75,14 +75,14 @@ func (ItemKind) EnumDescriptor() ([]byte, []int) {
 	return file_lyell_api_v1alpha1_item_proto_rawDescGZIP(), []int{0}
 }
 
-// Item は, 名前や中身が変わっても同じものを指し続ける記録. 中身の移り変わりは revision の列で持ち, item は今の revision (head) を指す.
+// Item は, 名前や中身が変わっても同じ対象を指し続ける記録. 中身の変遷は revision の列で持ち, item は現在の revision (head) を指す.
 type Item struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// id は item の ID (UUIDv7 を, ハイフン区切りの36文字で書いたもの). 作った後は変わらない.
+	// id は item の ID (UUIDv7 をハイフン区切りの36文字で表記したもの). 作成後は変わらない.
 	Id string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	// kind は item の種類. 作った後は変わらない.
+	// kind は item の種類. 作成後は変わらない.
 	Kind ItemKind `protobuf:"varint,2,opt,name=kind,proto3,enum=lyell.api.v1alpha1.ItemKind" json:"kind,omitempty"`
-	// head は, 今指している revision の ID.
+	// head は, 現在指している revision の ID.
 	Head          string `protobuf:"bytes,3,opt,name=head,proto3" json:"head,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -142,13 +142,13 @@ func (x *Item) GetHead() string {
 // Revision は, item の中身の, ある時点の記録. 一度記録すると変わらない.
 type Revision struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// id は revision の ID (UUIDv7 を, ハイフン区切りの36文字で書いたもの).
+	// id は revision の ID (UUIDv7 をハイフン区切りの36文字で表記したもの).
 	Id string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	// item_id は, この revision を持つ item の ID.
+	// item_id は, この revision が属する item の ID.
 	ItemId string `protobuf:"bytes,2,opt,name=item_id,json=itemId,proto3" json:"item_id,omitempty"`
-	// parents は, 1つ前の revision の ID. 最初の revision は持たない. item の統合では, 別の item の revision も親になる.
+	// parents は, 1つ前の revision の ID. 最初の revision には無い. item の統合では, 別の item の revision も親になる.
 	Parents []string `protobuf:"bytes,3,rep,name=parents,proto3" json:"parents,omitempty"`
-	// content は中身. 間引かれていれば無いが, 親は辿れる.
+	// content は中身. 間引かれていれば存在しないが, 親は辿れる.
 	Content       *RevisionContent `protobuf:"bytes,4,opt,name=content,proto3" json:"content,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -217,13 +217,13 @@ type RevisionContent struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// create_time は, revision を記録した時刻. ミリ秒より細かい部分は切り捨てる.
 	CreateTime *timestamppb.Timestamp `protobuf:"bytes,1,opt,name=create_time,json=createTime,proto3" json:"create_time,omitempty"`
-	// author_user は, 記録した利用者. 認証ができるまでは, サーバが "anonymous" を入れる.
+	// author_user は, 記録した利用者. 認証を実装するまでは, サーバが "anonymous" を設定する.
 	AuthorUser string `protobuf:"bytes,2,opt,name=author_user,json=authorUser,proto3" json:"author_user,omitempty"`
-	// author_machine は, 記録した機体. 認証ができるまでは, サーバが "anonymous" を入れる.
+	// author_machine は, 記録したマシン. 認証を実装するまでは, サーバが "anonymous" を設定する.
 	AuthorMachine string `protobuf:"bytes,3,opt,name=author_machine,json=authorMachine,proto3" json:"author_machine,omitempty"`
-	// blob_sha256 は, 中身のバイト列 (blob) の SHA-256 を, 小文字の16進の64文字で書いたもの. バイト列は /lyell/api/v1alpha1/blobs/sha256/<blob_sha256> で読む.
+	// blob_sha256 は, 中身のバイト列 (blob) の SHA-256 を, 小文字の16進数64文字で表記したもの. バイト列は /lyell/api/v1alpha1/blobs/sha256/<blob_sha256> で読み取る.
 	BlobSha256 string `protobuf:"bytes,4,opt,name=blob_sha256,json=blobSha256,proto3" json:"blob_sha256,omitempty"`
-	// blob_size は, 中身のバイト列の大きさ (バイト). ファイルシステムとして見せる時に, バイト列を取りに行かずに大きさを答えるため.
+	// blob_size は, 中身のバイト列のサイズ (バイト). ファイルシステムとして見せる時に, バイト列を取得せずにサイズを答えるため.
 	BlobSize      int64 `protobuf:"varint,5,opt,name=blob_size,json=blobSize,proto3" json:"blob_size,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
