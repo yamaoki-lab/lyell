@@ -49,6 +49,8 @@ type NewRevision struct {
 //
 // 早送りだけを受け付ける. 新しい revision は From (現在の head) の子孫でなければならない. head が From から動いていたら, 何も記録せずに *NotFastForwardError (ErrNotFastForward) を返す. 読み取ってから書き込むまでの間に他の書き込みが head を進めても, 一方だけが成功する.
 //
+// 引数が不正なら ErrInvalid を, item や親の revision が存在しなければ ErrNotFound を返す.
+//
 // 中身のバイト列 (blob) は, CreateItem と同じく, 先に書き込んでから記録する. 拒否した時や記録に失敗した時は, 書き込んだ blob が孤立して残る. どこからも参照されない blob は無害で, 後の GC で回収できる.
 func (s *Store) CommitRevision(ctx context.Context, r NewRevision) (ID, error) {
 	itemID, from, parents, content := r.ItemID, r.From, r.Parents, r.Content
@@ -82,6 +84,14 @@ func (s *Store) CommitRevision(ctx context.Context, r NewRevision) (ID, error) {
 		return ID{}, err
 	}
 	for _, p := range parents {
+		// 存在しない親は外部キーの制約でも拒否されるが, そのエラーは DB の故障と区別できないので, 先に確認して ErrNotFound を返す.
+		var exists bool
+		if err := tx.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM revisions WHERE id = ?)", p[:]).Scan(&exists); err != nil {
+			return ID{}, err
+		}
+		if !exists {
+			return ID{}, fmt.Errorf("親 revision %s: %w", p, ErrNotFound)
+		}
 		if _, err := tx.ExecContext(ctx, "INSERT INTO revision_parents (revision_id, parent_id) VALUES (?, ?)", revID[:], p[:]); err != nil {
 			return ID{}, fmt.Errorf("親 %s を記録できない: %w", p, err)
 		}
@@ -123,12 +133,12 @@ func validateParents(from ID, parents []ID) error {
 	seen := make(map[ID]bool, len(parents))
 	for _, p := range parents {
 		if seen[p] {
-			return fmt.Errorf("親 %s が重複している", p)
+			return fmt.Errorf("%w: 親 %s が重複している", ErrInvalid, p)
 		}
 		seen[p] = true
 	}
 	if !seen[from] {
-		return fmt.Errorf("親に前提の head %s が含まれていない. 早送りにならない", from)
+		return fmt.Errorf("%w: 親に前提の head %s が含まれていない. 早送りにならない", ErrInvalid, from)
 	}
 	return nil
 }

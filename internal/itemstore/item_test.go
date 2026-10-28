@@ -134,8 +134,8 @@ func TestCreateItem_RejectsInvalidInputWithoutWriting(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if _, err := s.CreateItem(ctx, NewItem{Kind: tt.kind, Content: tt.content, Data: bytes.NewReader(tt.content.Body)}); err == nil {
-				t.Errorf("CreateItem() error = nil, want error")
+			if _, err := s.CreateItem(ctx, NewItem{Kind: tt.kind, Content: tt.content, Data: bytes.NewReader(tt.content.Body)}); !errors.Is(err, ErrInvalid) {
+				t.Errorf("CreateItem() error = %v, want ErrInvalid", err)
 			}
 		})
 	}

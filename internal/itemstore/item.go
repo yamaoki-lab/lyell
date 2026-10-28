@@ -78,6 +78,9 @@ var ErrNotFound = errors.New("itemstore: 存在しない")
 // ErrBlobNotFound は, Data を渡さずに記録しようとした時に, Content.Blob の blob が存在しないことを表す.
 var ErrBlobNotFound = errors.New("itemstore: blob が存在しない")
 
+// ErrInvalid は, 引数が不正な時のエラー (不明な種類, 親の重複等). 呼び出し側の誤りなので, 同じ引数で再試行しても成功しない. API では, サーバの故障と区別して呼び出し側に返すために使う.
+var ErrInvalid = errors.New("itemstore: 引数が不正")
+
 // NewItem は, CreateItem で作成する item の内容. フィールドを追加しても呼び出し側を変更せずに済むよう, 引数を並べずに構造体で受け取る. 指定しなかったフィールドはゼロ値になる.
 type NewItem struct {
 	Kind    Kind
@@ -88,7 +91,7 @@ type NewItem struct {
 	PutOptions []blobstore.PutOption
 }
 
-// CreateItem は, item を最初の revision と一緒に作成する.
+// CreateItem は, item を最初の revision と一緒に作成する. 引数が不正なら ErrInvalid を返す.
 //
 // 先に blob を書き込み (書き込みが完了した時点でディスクに永続化されている), その後で item と revision を1つのトランザクションで記録する. 逆の順にすると, 記録した後にクラッシュした場合に, 存在しない blob を指す revision が残る. この順なら, 途中でクラッシュしても孤立した blob が残るだけで, 後の GC で回収できる.
 func (s *Store) CreateItem(ctx context.Context, n NewItem) (Item, error) {
@@ -270,15 +273,15 @@ func (k Kind) validate() error {
 	case KindAsset, KindCollection:
 		return nil
 	}
-	return fmt.Errorf("不明な item の種類: %q", k)
+	return fmt.Errorf("%w: 不明な item の種類 %q", ErrInvalid, k)
 }
 
 func (c Content) validate() error {
 	if c.CreatedAt.IsZero() {
-		return errors.New("記録時刻 (CreatedAt) が指定されていない")
+		return fmt.Errorf("%w: 記録時刻 (CreatedAt) が指定されていない", ErrInvalid)
 	}
 	if c.AuthorUser == "" || c.AuthorMachine == "" {
-		return errors.New("記録した利用者とマシン (AuthorUser, AuthorMachine) は両方必須. 認証を経ない経路では anonymous にする")
+		return fmt.Errorf("%w: 記録した利用者とマシン (AuthorUser, AuthorMachine) は両方必須. 認証を経ない経路では anonymous にする", ErrInvalid)
 	}
 	return nil
 }

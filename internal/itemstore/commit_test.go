@@ -163,16 +163,17 @@ func TestCommitRevision_RejectsBadInput(t *testing.T) {
 		parents []ID
 		want    error
 	}{
-		{name: "親を指定したが前提の head が含まれていない", itemID: item.ID, from: item.Head, parents: []ID{other}},
-		{name: "親が重複している", itemID: item.ID, from: item.Head, parents: []ID{item.Head, item.Head}},
-		{name: "存在しない revision を親にする", itemID: item.ID, from: item.Head, parents: []ID{item.Head, other}},
-		{name: "存在しない item", itemID: other, from: item.Head, parents: []ID{item.Head}},
+		{name: "親を指定したが前提の head が含まれていない", itemID: item.ID, from: item.Head, parents: []ID{other}, want: ErrInvalid},
+		{name: "親が重複している", itemID: item.ID, from: item.Head, parents: []ID{item.Head, item.Head}, want: ErrInvalid},
+		{name: "存在しない revision を親にする", itemID: item.ID, from: item.Head, parents: []ID{item.Head, other}, want: ErrNotFound},
+		{name: "存在しない item", itemID: other, from: item.Head, parents: []ID{item.Head}, want: ErrNotFound},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			before := countRevisions(t, s)
-			if _, err := s.CommitRevision(ctx, NewRevision{ItemID: tt.itemID, From: tt.from, Parents: tt.parents, Content: testContent("bad"), Data: strings.NewReader("bad")}); err == nil {
-				t.Errorf("CommitRevision() error = nil, want error")
+			// API は, 呼び出し側の誤り (ErrInvalid, ErrNotFound) を DB の故障と区別して返すので, エラーの種類まで確認する.
+			if _, err := s.CommitRevision(ctx, NewRevision{ItemID: tt.itemID, From: tt.from, Parents: tt.parents, Content: testContent("bad"), Data: strings.NewReader("bad")}); !errors.Is(err, tt.want) {
+				t.Errorf("CommitRevision() error = %v, want %v", err, tt.want)
 			}
 			if after := countRevisions(t, s); after != before {
 				t.Errorf("拒否した時の revision の数 = %d, want %d", after, before)
