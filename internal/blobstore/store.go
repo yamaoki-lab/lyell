@@ -48,35 +48,38 @@ func (e *MismatchError) Error() string {
 	return fmt.Sprintf("中身の SHA-256 %s が, 名前の %s と一致しない", e.Got, e.Want)
 }
 
-// Put は, data を sum の blob として書き込む. data の SHA-256 が sum と一致しなければ, 何も保存せずに *MismatchError を返す.
+// Put は, data を sum の blob として書き込み, この呼び出しで blob を新規に作成したかを返す. data の SHA-256 が sum と一致しなければ, 何も保存せずに *MismatchError を返す.
 //
-// sum の blob が既に存在する時も, 呼び出し側の計算を信頼せずに data を最後まで読んで検証する. 検証せずに成功を返すと, 名前と異なる中身が保存されていないのに, 保存できたと誤認されるため. この時はディスクに書き込まない. 転送そのものを省略したい時は, 先に Exists で確認する.
+// sum の blob が既に存在する時も, 呼び出し側の計算を信頼せずに data を最後まで読んで検証する. 検証せずに成功を返すと, 名前と異なる中身が保存されていないのに, 保存できたと誤認されるため. この時はディスクに書き込まず, false を返す. 転送そのものを省略したい時は, 先に Exists で確認する.
 //
-// 同じ sum への Put は, 同時には書き込まない. 後から来た Put は先の Put の完了を待ち, その後は既に存在する時と同じく検証だけを行う. 異なる sum への Put は互いに待たない.
+// 同じ sum への Put は, 同時には書き込まない. 後から来た Put は先の Put の完了を待ち, その後は既に存在する時と同じく検証だけを行う. 異なる sum への Put は互いに待たない. 存在の確認をロックの中で行うので, 同じ sum への Put がほぼ同時に来ても, true を返すのは1つだけになる. 呼び出し側が Exists で確認してから Put すると, 確認がロックの外になり, この保証が無くなる.
 //
 // opts は, data を読む前に CheckPutOptions で検証する. サポートしないオプションがあれば, 何も読まず何も保存せずに *UnsupportedOptionError を返す. 既に存在する blob は保存し直さないので, その時 opts は使用しない (既に存在する blob の保存先を変更するのは, 別の操作として扱う).
-func (s *Store) Put(ctx context.Context, sum Sum, data io.Reader, opts ...PutOption) error {
+func (s *Store) Put(ctx context.Context, sum Sum, data io.Reader, opts ...PutOption) (created bool, err error) {
 	if err := s.backend.CheckPutOptions(opts...); err != nil {
-		return err
+		return false, err
 	}
 	unlock, err := s.locks.lock(ctx, sum)
 	if err != nil {
-		return err
+		return false, err
 	}
 	ok, err := s.Exists(ctx, sum)
 	if err != nil {
 		unlock()
-		return err
+		return false, err
 	}
 	v := &verifyingReader{r: data, h: sha256.New(), want: sum}
 	if ok {
 		// 書き込まないので, 検証の間は他の Put を待たせない.
 		unlock()
 		_, err := io.Copy(io.Discard, v)
-		return err
+		return false, err
 	}
 	defer unlock()
-	return s.backend.Put(ctx, sum, v, opts...)
+	if err := s.backend.Put(ctx, sum, v, opts...); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // CheckPutOptions は, 書き込まずにオプションだけを検証する. 設定を読み込んだ時や画面から値を受け取った時に呼べば, 最初の書き込みより前に誤りを検出できる.

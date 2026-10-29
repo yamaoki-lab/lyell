@@ -41,7 +41,7 @@ func newTestServer(t *testing.T) (*Server, apiv1alpha1connect.ItemServiceClient)
 func putBlob(t *testing.T, s *Server, data string) string {
 	t.Helper()
 	sum := blobstore.Sum(sha256.Sum256([]byte(data)))
-	if err := s.blobs.Put(context.Background(), sum, strings.NewReader(data)); err != nil {
+	if _, err := s.blobs.Put(context.Background(), sum, strings.NewReader(data)); err != nil {
 		t.Fatalf("blob を保存できない: %v", err)
 	}
 	return sum.String()

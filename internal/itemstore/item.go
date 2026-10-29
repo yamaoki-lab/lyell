@@ -81,7 +81,7 @@ var ErrBlobNotFound = errors.New("itemstore: blob が存在しない")
 // ErrInvalid は, 引数が不正な時のエラー (不明な種類, 親の重複等). 呼び出し側の誤りなので, 同じ引数で再試行しても成功しない. API では, サーバの故障と区別して呼び出し側に返すために使う.
 var ErrInvalid = errors.New("itemstore: 引数が不正")
 
-// NewItem は, CreateItem で作成する item の内容. フィールドを追加しても呼び出し側を変更せずに済むよう, 引数を並べずに構造体で受け取る. 指定しなかったフィールドはゼロ値になる.
+// NewItem は, CreateItem で作成する item の内容. フィールドを追加した時に呼び出し側のコードの変更を不要にするため, 引数を並べずに構造体で受け取る. 指定しなかったフィールドはゼロ値になる.
 type NewItem struct {
 	Kind    Kind
 	Content Content // 最初の revision の中身
@@ -141,7 +141,7 @@ func (s *Store) CreateItem(ctx context.Context, n NewItem) (Item, error) {
 // 確認してから記録するまでの間に, blob が削除されることは考慮しない. どこからも参照されない blob を削除する GC を実装する時に, 作成直後の blob を削除しない猶予期間を設ける.
 func (s *Store) placeBlob(ctx context.Context, sum blobstore.Sum, data io.Reader, opts []blobstore.PutOption) (int64, error) {
 	if data != nil {
-		if err := s.blobs.Put(ctx, sum, data, opts...); err != nil {
+		if _, err := s.blobs.Put(ctx, sum, data, opts...); err != nil {
 			return 0, fmt.Errorf("blob を書き込めない: %w", err)
 		}
 	}

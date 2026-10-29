@@ -26,7 +26,7 @@ func TestStore_PutThenOpenRoundTrips(t *testing.T) {
 	store := New(NewLocalStore(t.TempDir()))
 	ctx := context.Background()
 
-	if err := store.Put(ctx, sumOf("hello"), strings.NewReader("hello")); err != nil {
+	if _, err := store.Put(ctx, sumOf("hello"), strings.NewReader("hello")); err != nil {
 		t.Fatalf("Put() error = %v, want nil", err)
 	}
 
@@ -52,7 +52,7 @@ func TestStore_SizeAndExistsReflectPut(t *testing.T) {
 	if ok, err := store.Exists(ctx, sumOf("hello")); err != nil || ok {
 		t.Fatalf("Put の前の Exists() = %v, %v, want false, nil", ok, err)
 	}
-	if err := store.Put(ctx, sumOf("hello"), strings.NewReader("hello")); err != nil {
+	if _, err := store.Put(ctx, sumOf("hello"), strings.NewReader("hello")); err != nil {
 		t.Fatalf("Put() error = %v, want nil", err)
 	}
 	if ok, err := store.Exists(ctx, sumOf("hello")); err != nil || !ok {
@@ -69,10 +69,13 @@ func TestStore_PutMismatchPlacesNothing(t *testing.T) {
 	store := New(local)
 	ctx := context.Background()
 
-	err := store.Put(ctx, sumOf("hello"), strings.NewReader("goodbye"))
+	created, err := store.Put(ctx, sumOf("hello"), strings.NewReader("goodbye"))
 	var mismatch *MismatchError
 	if !errors.As(err, &mismatch) {
 		t.Fatalf("Put() error = %v, want *MismatchError", err)
+	}
+	if created {
+		t.Errorf("一致しない中身での Put() created = true, want false")
 	}
 	if mismatch.Want != sumOf("hello") || mismatch.Got != sumOf("goodbye") {
 		t.Errorf("MismatchError = {Want: %s, Got: %s}, want {Want: %s, Got: %s}", mismatch.Want, mismatch.Got, sumOf("hello"), sumOf("goodbye"))
@@ -95,20 +98,20 @@ func TestStore_PutExistingVerifiesWithoutWriting(t *testing.T) {
 	store := New(backend)
 	ctx := context.Background()
 
-	if err := store.Put(ctx, sumOf("hello"), strings.NewReader("hello")); err != nil {
-		t.Fatalf("Put() error = %v, want nil", err)
+	if created, err := store.Put(ctx, sumOf("hello"), strings.NewReader("hello")); err != nil || !created {
+		t.Fatalf("Put() = %v, %v, want true, nil", created, err)
 	}
 
-	// 一致する中身なら成功するが, 保存先には書き込まない.
-	if err := store.Put(ctx, sumOf("hello"), strings.NewReader("hello")); err != nil {
-		t.Fatalf("2回目の Put() error = %v, want nil", err)
+	// 一致する中身なら成功するが, 保存先には書き込まず, 新規に作成したとは返さない.
+	if created, err := store.Put(ctx, sumOf("hello"), strings.NewReader("hello")); err != nil || created {
+		t.Fatalf("2回目の Put() = %v, %v, want false, nil", created, err)
 	}
 	if backend.puts != 1 {
 		t.Errorf("Backend.Put の回数 = %d, want 1", backend.puts)
 	}
 
 	// 既に存在しても, 一致しない中身は拒否する.
-	err := store.Put(ctx, sumOf("hello"), strings.NewReader("goodbye"))
+	_, err := store.Put(ctx, sumOf("hello"), strings.NewReader("goodbye"))
 	var mismatch *MismatchError
 	if !errors.As(err, &mismatch) {
 		t.Fatalf("一致しない中身での Put() error = %v, want *MismatchError", err)
@@ -118,7 +121,7 @@ func TestStore_PutExistingVerifiesWithoutWriting(t *testing.T) {
 func TestStore_PutPropagatesReadError(t *testing.T) {
 	store := New(NewLocalStore(t.TempDir()))
 
-	err := store.Put(context.Background(), sumOf("partial"), &failingReader{remaining: []byte("partial")})
+	_, err := store.Put(context.Background(), sumOf("partial"), &failingReader{remaining: []byte("partial")})
 	if err == nil {
 		t.Fatalf("Put() error = nil, want error")
 	}
@@ -178,21 +181,38 @@ func TestStore_ConcurrentPutsOfSameSumWriteOnce(t *testing.T) {
 	store := New(backend)
 	ctx := context.Background()
 
-	errs := make(chan error, 2)
-	go func() { errs <- store.Put(ctx, sumOf("hello"), strings.NewReader("hello")) }()
+	type result struct {
+		created bool
+		err     error
+	}
+	results := make(chan result, 2)
+	put := func() {
+		created, err := store.Put(ctx, sumOf("hello"), strings.NewReader("hello"))
+		results <- result{created, err}
+	}
+	go put()
 	<-backend.entered
-	go func() { errs <- store.Put(ctx, sumOf("hello"), strings.NewReader("hello")) }()
+	go put()
 	// 2つ目の Put が, 1つ目の書き込みの途中で待機している状態を作る.
 	waitForWaiters(t, store, sumOf("hello"), 2)
 	close(backend.release)
 
+	created := 0
 	for range 2 {
-		if err := <-errs; err != nil {
-			t.Errorf("Put() error = %v, want nil", err)
+		r := <-results
+		if r.err != nil {
+			t.Errorf("Put() error = %v, want nil", r.err)
+		}
+		if r.created {
+			created++
 		}
 	}
 	if backend.puts != 1 {
 		t.Errorf("Backend.Put の回数 = %d, want 1", backend.puts)
+	}
+	// 存在の確認をロックの中で行うので, 新規に作成したと返すのは1つだけになる.
+	if created != 1 {
+		t.Errorf("created が true の Put の数 = %d, want 1", created)
 	}
 	if n := len(store.locks.entries); n != 0 {
 		t.Errorf("終了後のロックの待機数 = %d, want 0", n)
@@ -205,11 +225,14 @@ func TestStore_PutsOfDifferentSumsDoNotWait(t *testing.T) {
 	ctx := context.Background()
 
 	errs := make(chan error, 1)
-	go func() { errs <- store.Put(ctx, sumOf("hello"), strings.NewReader("hello")) }()
+	go func() {
+		_, err := store.Put(ctx, sumOf("hello"), strings.NewReader("hello"))
+		errs <- err
+	}()
 	<-backend.entered
 
 	// "hello" の書き込みが停止している間でも, 異なる名前の Put は完了する.
-	if err := store.Put(ctx, sumOf("world"), strings.NewReader("world")); err != nil {
+	if _, err := store.Put(ctx, sumOf("world"), strings.NewReader("world")); err != nil {
 		t.Errorf("Put(world) error = %v, want nil", err)
 	}
 

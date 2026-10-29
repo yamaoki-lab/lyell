@@ -40,7 +40,7 @@ func TestStore_PutRejectsRequiredOptionBeforeReading(t *testing.T) {
 	ctx := context.Background()
 
 	// 読み取るとすぐにエラーを返す Reader を渡す. 読む前に拒否していれば, 読み取りのエラーではなく UnsupportedOptionError が返る.
-	err := store.Put(ctx, sumOf("hello"), &failingReader{}, testOption{required: true})
+	_, err := store.Put(ctx, sumOf("hello"), &failingReader{}, testOption{required: true})
 	var unsupported *UnsupportedOptionError
 	if !errors.As(err, &unsupported) {
 		t.Fatalf("Put() error = %v, want *UnsupportedOptionError", err)
@@ -58,7 +58,7 @@ func TestStore_PutRejectsRequiredOptionBeforeReading(t *testing.T) {
 func TestStore_PutIgnoresUnknownHint(t *testing.T) {
 	store := New(NewLocalStore(t.TempDir()))
 
-	if err := store.Put(context.Background(), sumOf("hello"), strings.NewReader("hello"), testOption{required: false}); err != nil {
+	if _, err := store.Put(context.Background(), sumOf("hello"), strings.NewReader("hello"), testOption{required: false}); err != nil {
 		t.Errorf("任意のオプションで Put() error = %v, want nil", err)
 	}
 }
