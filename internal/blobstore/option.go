@@ -2,20 +2,20 @@ package blobstore
 
 import "fmt"
 
-// PutOption は, Put に渡す書き込みの選択肢 (どの置き場に書くか, 何か所に複製するか等). 種類は, 置き場の実装が自分のパッケージで型として定義する. blobstore は種類を1つも決めない.
+// PutOption は, Put に渡す書き込みのオプション (どの保存先に書き込むか, 何か所に複製するか等). 種類は, 保存先の実装が自身のパッケージで型として定義する. blobstore は種類を1つも定義しない.
 //
-// 実装ごとの選択肢は, 実装を作る所 (起動時の組み立て) で一緒に組み立て, 使う側にはできあがったものを渡す. そうすれば, 実装と選択肢の取り違えの多くはコンパイル時に捕まる. 利用者が画面や設定ファイルで選ぶ値のように実行時にしか分からないものは, CheckPutOptions で最初の書き込みより前に確かめる.
+// 実装ごとのオプションは, 実装を生成する箇所 (起動時の初期化) で一緒に組み立て, 呼び出し側には組み立て済みのものを渡す. そうすれば, 実装とオプションの取り違えの多くはコンパイル時に検出できる. 利用者が画面や設定ファイルで選ぶ値のように実行時にしか分からないものは, CheckPutOptions で最初の書き込みより前に検証する.
 type PutOption interface {
-	// Required は, この選択肢を扱えない実装が Put を断るべきかを返す. false なら希望として扱い, 知らない実装は無視してよい. true なら, 扱えない実装は *UnsupportedOptionError で断る.
+	// Required は, このオプションをサポートしない実装が Put を拒否すべきかを返す. false なら任意のオプションとして扱い, 未知の実装は無視してよい. true なら, サポートしない実装は *UnsupportedOptionError で拒否する.
 	Required() bool
 }
 
-// UnsupportedOptionError は, 置き場の実装が書き込みの選択肢を扱えない時のエラー. 知らない種類の必須の選択肢のほか, 知っている種類でも値を受け付けられない時 (無い置き場の名前等) にも使う.
+// UnsupportedOptionError は, 保存先の実装が書き込みのオプションをサポートしない時のエラー. 未知の種類の必須のオプションのほか, 既知の種類でも値を受け付けられない時 (存在しない保存先の名前等) にも使用する.
 type UnsupportedOptionError struct {
 	Option PutOption
 	Reason string
 }
 
 func (e *UnsupportedOptionError) Error() string {
-	return fmt.Sprintf("書き込みの選択肢 %T (%v) を扱えない: %s", e.Option, e.Option, e.Reason)
+	return fmt.Sprintf("書き込みのオプション %T (%v) をサポートしていない: %s", e.Option, e.Option, e.Reason)
 }

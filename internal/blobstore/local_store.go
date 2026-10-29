@@ -16,7 +16,7 @@ type LocalStore struct {
 // LocalStore が Backend を満たさなくなったら, ここでコンパイルエラーになる.
 var _ Backend = (*LocalStore)(nil)
 
-// NewLocalStore は, root の下に内容を置く LocalStore を返す.
+// NewLocalStore は, root の下に blob を保存する LocalStore を返す.
 func NewLocalStore(root string) *LocalStore {
 	return &LocalStore{root: root}
 }
@@ -27,7 +27,7 @@ func NewLocalStore(root string) *LocalStore {
 //
 // blob は読み取り専用 (0444) で作成する. 名前は中身の SHA-256 なので, 作成後に中身が書き換えられると, 名前との不一致を検知できなくなる. 書き込みを終えたら fsync の前に, 一時ファイルの段階でパーミッションを 0444 に変更するので, 書き込み可能な blob が最終的なパスに存在することは無い. Windows では読み取り専用の属性が付く.
 //
-// LocalStore は保存先が1つであり, 書き込みの選択肢を一切サポートしないため, opts は使用しない.
+// LocalStore は保存先が1つであり, 書き込みのオプションを一切サポートしないため, opts は使用しない.
 func (s *LocalStore) Put(_ context.Context, sum Sum, data io.Reader, _ ...PutOption) error {
 	finalPath := s.path(sum)
 	if err := mkdirAllDurable(filepath.Dir(finalPath)); err != nil {
@@ -69,11 +69,11 @@ func (s *LocalStore) Put(_ context.Context, sum Sum, data io.Reader, _ ...PutOpt
 	return syncDir(filepath.Dir(finalPath))
 }
 
-// CheckPutOptions は, 必須の選択肢があれば拒否し, 希望の選択肢は無視する. LocalStore は書き込みの選択肢を一切サポートしないため.
+// CheckPutOptions は, 必須のオプションがあれば拒否し, 任意のオプションは無視する. LocalStore は書き込みのオプションを一切サポートしないため.
 func (s *LocalStore) CheckPutOptions(opts ...PutOption) error {
 	for _, opt := range opts {
 		if opt.Required() {
-			return &UnsupportedOptionError{Option: opt, Reason: "LocalStore は書き込みの選択肢を扱わない"}
+			return &UnsupportedOptionError{Option: opt, Reason: "LocalStore は書き込みのオプションをサポートしていない"}
 		}
 	}
 	return nil
@@ -93,7 +93,7 @@ func (s *LocalStore) Size(_ context.Context, sum Sum) (int64, error) {
 	return fi.Size(), nil
 }
 
-// path は, sum の blob のパスを root/sha256/<1〜2文字目>/<3〜4文字目>/<64文字全体> にする (Git LFS と同じ形). 2文字ずつ2階層に分けるので, blob が約6700万件になるまで, 1つのディレクトリのエントリは1024件以下に収まる. ファイラやターミナルでの閲覧時に, 1つのディレクトリ内の表示件数が過大になるのを防ぐため. ファイル名をハッシュ全体とすることで, 表示されたファイル名をそのまま blob 名として利用可能にしている. "sha256" の階層は, 将来ハッシュアルゴリズムを変更した時に共存させられるようにするため.
+// path は, sum の blob のパスを root/sha256/<1〜2文字目>/<3〜4文字目>/<64文字全体> にする (Git LFS と同じ構成). 2文字ずつ2階層に分けるので, blob が約6700万件になるまで, 1つのディレクトリのエントリは1024件以下に収まる. ファイラやターミナルでの閲覧時に, 1つのディレクトリ内の表示件数が過大になるのを防ぐため. ファイル名をハッシュ全体とすることで, 表示されたファイル名をそのまま blob 名として利用可能にしている. "sha256" の階層は, 将来ハッシュアルゴリズムを変更した時に共存させられるようにするため.
 func (s *LocalStore) path(sum Sum) string {
 	h := sum.String()
 	return filepath.Join(s.root, "sha256", h[0:2], h[2:4], h)
