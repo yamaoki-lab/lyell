@@ -6,35 +6,35 @@ import "google/protobuf/timestamp.proto";
 
 option go_package = "github.com/yamaoki-lab/lyell/gen/lyell/api/v1alpha1;apiv1alpha1";
 
-// Item は, 名前や中身が変わっても同じものを指し続ける記録. 中身の移り変わりは revision の列で持ち, item は今の revision (head) を指す.
+// Item は, 名前や中身が変わっても同じ対象を指し続ける記録. 中身の変遷は revision の列で持ち, item は現在の revision (head) を指す.
 message Item {
-  // id は item の ID (UUIDv7 を, ハイフン区切りの36文字で書いたもの). 作った後は変わらない.
+  // id は item の ID (UUIDv7 をハイフン区切りの36文字で表記したもの). 作成後は変わらない.
   string id = 1;
-  // kind は item の種類. 作った後は変わらない.
+  // kind は item の種類. 作成後は変わらない.
   ItemKind kind = 2;
-  // head は, 今指している revision の ID.
+  // head は, 現在指している revision の ID.
   string head = 3;
 }
 
 // ItemKind は item の種類.
 enum ItemKind {
-  // ITEM_KIND_UNSPECIFIED は, 種類が書かれていないこと. 受け取ったら断る.
+  // ITEM_KIND_UNSPECIFIED は, 種類が指定されていないこと. 受け取った場合は拒否する.
   ITEM_KIND_UNSPECIFIED = 0;
-  // ITEM_KIND_ASSET は, 中身 (blob) がバイト列そのものの item.
+  // ITEM_KIND_ASSET は, 中身 (blob) がバイト列そのものである item.
   ITEM_KIND_ASSET = 1;
-  // ITEM_KIND_COLLECTION は, 中身が他の item への参照の一覧の item. 一覧の形が決まるまで, 作れない.
+  // ITEM_KIND_COLLECTION は, 中身が, 他の item への参照の一覧である item. 一覧の形式が決まるまでは作成できない.
   ITEM_KIND_COLLECTION = 2;
 }
 
 // Revision は, item の中身の, ある時点の記録. 一度記録すると変わらない.
 message Revision {
-  // id は revision の ID (UUIDv7 を, ハイフン区切りの36文字で書いたもの).
+  // id は revision の ID (UUIDv7 をハイフン区切りの36文字で表記したもの).
   string id = 1;
-  // item_id は, この revision を持つ item の ID.
+  // item_id は, この revision が属する item の ID.
   string item_id = 2;
-  // parents は, 1つ前の revision の ID. 最初の revision は持たない. item の統合では, 別の item の revision も親になる.
+  // parents は, 1つ前の revision の ID. 最初の revision には無い. item の統合では, 別の item の revision も親になる.
   repeated string parents = 3;
-  // content は中身. 間引かれていれば無いが, 親は辿れる.
+  // content は中身. 間引かれていれば存在しないが, 親は辿れる.
   RevisionContent content = 4;
 }
 
@@ -42,12 +42,12 @@ message Revision {
 message RevisionContent {
   // create_time は, revision を記録した時刻. ミリ秒より細かい部分は切り捨てる.
   google.protobuf.Timestamp create_time = 1;
-  // author_user は, 記録した利用者. 認証ができるまでは, サーバが "anonymous" を入れる.
+  // author_user は, 記録した利用者. 認証を実装するまでは, サーバが "anonymous" を設定する.
   string author_user = 2;
-  // author_machine は, 記録した機体. 認証ができるまでは, サーバが "anonymous" を入れる.
+  // author_machine は, 記録したマシン. 認証を実装するまでは, サーバが "anonymous" を設定する.
   string author_machine = 3;
-  // blob_sha256 は, 中身のバイト列 (blob) の SHA-256 を, 小文字の16進の64文字で書いたもの. バイト列は /lyell/api/v1alpha1/blobs/sha256/<blob_sha256> で読む.
+  // blob_sha256 は, 中身のバイト列 (blob) の SHA-256 を, 小文字の16進数64文字で表記したもの. バイト列は /lyell/api/v1alpha1/blobs/sha256/<blob_sha256> で読み取る.
   string blob_sha256 = 4;
-  // blob_size は, 中身のバイト列の大きさ (バイト). ファイルシステムとして見せる時に, バイト列を取りに行かずに大きさを答えるため.
+  // blob_size は, 中身のバイト列のサイズ (バイト). ファイルシステムとして見せる時に, バイト列を取得せずにサイズを答えるため.
   int64 blob_size = 5;
 }
