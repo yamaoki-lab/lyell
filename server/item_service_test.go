@@ -20,8 +20,15 @@ import (
 	"github.com/yamaoki-lab/lyell/internal/blobstore"
 )
 
-// newTestServer は, 一時ディレクトリに DB と blob の保存先を作成し, Register した mux を httptest のサーバで待ち受ける.
+// newTestServer は, startTestServer で待ち受け, ItemService のクライアントを返す.
 func newTestServer(t *testing.T) (*Server, apiv1alpha1connect.ItemServiceClient) {
+	t.Helper()
+	s, hs := startTestServer(t)
+	return s, apiv1alpha1connect.NewItemServiceClient(hs.Client(), hs.URL)
+}
+
+// startTestServer は, 一時ディレクトリに DB と blob の保存先を作成し, Register した mux を httptest のサーバで待ち受ける.
+func startTestServer(t *testing.T) (*Server, *httptest.Server) {
 	t.Helper()
 	dir := t.TempDir()
 	s, err := Open(context.Background(), Config{DBPath: filepath.Join(dir, "lyell.db"), BlobDir: filepath.Join(dir, "blobs")})
@@ -34,7 +41,7 @@ func newTestServer(t *testing.T) (*Server, apiv1alpha1connect.ItemServiceClient)
 	s.Register(mux)
 	hs := httptest.NewServer(mux)
 	t.Cleanup(hs.Close)
-	return s, apiv1alpha1connect.NewItemServiceClient(hs.Client(), hs.URL)
+	return s, hs
 }
 
 // putBlob は, data を blob として保存し, その SHA-256 を API の表記で返す. blob の HTTP を経ずに, blobstore へ直接保存する.
