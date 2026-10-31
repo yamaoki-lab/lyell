@@ -5,18 +5,18 @@ import (
 	"sync"
 )
 
-// sumLocks は, blob の名前 (Sum) ごとの順番待ち. 同じ名前には同時に1つしか入れないが, 違う名前どうしは互いに待たない.
+// sumLocks は, blob の名前 (Sum) ごとの排他制御. 同じ名前のロックは同時に1つしか取得できないが, 異なる名前どうしは互いに待たない.
 type sumLocks struct {
 	mu      sync.Mutex
 	entries map[Sum]*sumLockEntry
 }
 
 type sumLockEntry struct {
-	token chan struct{} // 容量1. 値が入っている間は誰かが使っている
-	refs  int           // 使っている1つと, 待っている数の合計. 0 になったら entries から消す
+	token chan struct{} // 容量1. 値が入っている間は, ロックが取得されている
+	refs  int           // ロックを保持している1つと, 待機している数の合計. 0 になったら entries から削除する
 }
 
-// lock は, sum の番が来るまで待ち, 番を返す関数を返す. 待っている間に ctx が終わったら, 並ぶのをやめて ctx のエラーを返す.
+// lock は, sum のロックを取得できるまで待機し, ロックを解放する関数を返す. 待機中に ctx が終了したら, 待機をやめて ctx のエラーを返す.
 func (l *sumLocks) lock(ctx context.Context, sum Sum) (unlock func(), err error) {
 	l.mu.Lock()
 	if l.entries == nil {

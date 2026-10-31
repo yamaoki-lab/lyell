@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// Go のパーミッションの表現を介さずに, Windows の読み取り専用の属性そのものを確かめる.
+// Go のパーミッションの表現を介さずに, Windows の読み取り専用の属性そのものを確認する.
 func TestLocalStore_PutSetsReadOnlyAttribute(t *testing.T) {
 	store := NewLocalStore(t.TempDir())
 	sum := sumOf("hello")

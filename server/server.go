@@ -59,6 +59,10 @@ func Open(ctx context.Context, cfg Config) (*Server, error) {
 // Register は, API のパスを mux に登録する.
 func (s *Server) Register(mux *http.ServeMux) {
 	mux.Handle(apiv1alpha1connect.NewItemServiceHandler(&itemService{items: s.items, log: s.log}))
+	b := &blobHandler{blobs: s.blobs, log: s.log}
+	// GET のパターンは HEAD にも一致する. 他のメソッドには, mux が 405 を返す.
+	mux.HandleFunc("GET "+blobPath, b.get)
+	mux.HandleFunc("PUT "+blobPath, b.put)
 }
 
 // Close は, DB を閉じる. 処理中のリクエストが全て終了してから (http.Server.Shutdown の後で) 呼ぶ.

@@ -130,13 +130,13 @@ func TestLocalStore_Put_FailureLeavesNoPartialFileAtFinalPath(t *testing.T) {
 		t.Errorf("final path exists after failed Put (statErr = %v), want os.ErrNotExist", statErr)
 	}
 
-	// 一時ディレクトリに不要なファイルが残っても実害は無いが, 削除されていることも確かめる.
+	// 一時ディレクトリに不要なファイルが残っても実害は無いが, 削除されていることも確認する.
 	entries, err := os.ReadDir(filepath.Join(root, ".tmp"))
 	if err != nil {
 		t.Fatalf("ReadDir(.tmp) error = %v, want nil", err)
 	}
 	if len(entries) != 0 {
-		t.Errorf(".tmp配下に%d件のファイルが残っている, want 0", len(entries))
+		t.Errorf(".tmp の下に%d件のファイルが残っている, want 0", len(entries))
 	}
 }
 

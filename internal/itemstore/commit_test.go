@@ -218,7 +218,7 @@ func TestCreateItem_WithoutDataUsesPlacedBlob(t *testing.T) {
 		t.Errorf("拒否した後に行が %d 件ある, want 0", n)
 	}
 
-	if err := s.blobs.Put(ctx, content.Blob, strings.NewReader("placed")); err != nil {
+	if _, err := s.blobs.Put(ctx, content.Blob, strings.NewReader("placed")); err != nil {
 		t.Fatalf("blob を保存できない: %v", err)
 	}
 	item, err := s.CreateItem(ctx, NewItem{Kind: KindAsset, Content: content})
@@ -254,7 +254,7 @@ func TestCommitRevision_WithoutDataUsesPlacedBlob(t *testing.T) {
 		t.Errorf("拒否した後の revision の数 = %d, want %d", after, before)
 	}
 
-	if err := s.blobs.Put(ctx, content.Blob, strings.NewReader("r2")); err != nil {
+	if _, err := s.blobs.Put(ctx, content.Blob, strings.NewReader("r2")); err != nil {
 		t.Fatalf("blob を保存できない: %v", err)
 	}
 	r2, err := s.CommitRevision(ctx, NewRevision{ItemID: item.ID, From: item.Head, Content: content})
