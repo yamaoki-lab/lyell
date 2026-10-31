@@ -2,8 +2,10 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
@@ -119,10 +121,70 @@ func TestListItems_RejectsBadRequest(t *testing.T) {
 		{name: "並び順のフィールドが2つ", req: &apiv1alpha1.ListItemsRequest{OrderBy: "item.id, item.id desc"}},
 		{name: "order_by の形式が不正", req: &apiv1alpha1.ListItemsRequest{OrderBy: "item.id up"}},
 		{name: "asc", req: &apiv1alpha1.ListItemsRequest{OrderBy: "item.id asc"}},
-		{name: "filter", req: &apiv1alpha1.ListItemsRequest{Filter: "item.kind = ITEM_KIND_ASSET"}},
 	}
 	for _, tt := range tests {
 		_, err := c.ListItems(context.Background(), connect.NewRequest(tt.req))
+		wantCode(t, tt.name, err, connect.CodeInvalidArgument)
+	}
+}
+
+func TestListItems_Filter(t *testing.T) {
+	s, c := newTestServer(t)
+	var ids []string
+	var times []time.Time
+	for _, data := range []string{"a", "b", "c"} {
+		res := createItem(t, s, c, data)
+		ids = append(ids, res.GetItem().GetId())
+		times = append(times, res.GetRevision().GetContent().GetCreateTime().AsTime())
+		// 記録時刻はミリ秒単位なので, 続けて作成すると同じ時刻になりうる. 境界の比較を確かめるため, 時刻をずらす.
+		time.Sleep(2 * time.Millisecond)
+	}
+	at := func(i int) string { return times[i].Format(time.RFC3339Nano) }
+
+	tests := []struct {
+		name   string
+		filter string
+		want   []string // 古い順
+	}{
+		{name: "kind", filter: "item.kind = ITEM_KIND_ASSET", want: ids},
+		{name: "collection は作成できないので空", filter: "item.kind = ITEM_KIND_COLLECTION"},
+		{name: "以降", filter: fmt.Sprintf("head_revision.content.create_time >= %q", at(1)), want: ids[1:]},
+		{name: "より後", filter: fmt.Sprintf("head_revision.content.create_time > %q", at(1)), want: ids[2:]},
+		{name: "より前", filter: fmt.Sprintf("head_revision.content.create_time < %q", at(1)), want: ids[:1]},
+		{name: "以前", filter: fmt.Sprintf("head_revision.content.create_time <= %q", at(1)), want: ids[:2]},
+		{name: "timestamp 関数", filter: fmt.Sprintf("head_revision.content.create_time >= timestamp(%q)", at(2)), want: ids[2:]},
+		{name: "AND で範囲と kind", filter: fmt.Sprintf("item.kind = ITEM_KIND_ASSET AND head_revision.content.create_time >= %q AND head_revision.content.create_time < %q", at(1), at(2)), want: ids[1:2]},
+		{name: "同じ側の条件は狭い方を採用", filter: fmt.Sprintf("head_revision.content.create_time >= %q AND head_revision.content.create_time >= %q", at(0), at(2)), want: ids[2:]},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := listItemIDs(t, c, &apiv1alpha1.ListItemsRequest{Filter: tt.filter, OrderBy: "item.id", PageSize: 1}, int32(len(tt.want)))
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("filter %q の ID = %v, want %v", tt.filter, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestListItems_RejectsUnsupportedFilter(t *testing.T) {
+	_, c := newTestServer(t)
+	tests := []struct {
+		name   string
+		filter string
+	}{
+		{name: "宣言していないフィールド", filter: `head_revision.content.author_user = "user"`},
+		{name: "item. を付けない", filter: "kind = ITEM_KIND_ASSET"},
+		{name: "OR", filter: "item.kind = ITEM_KIND_ASSET OR item.kind = ITEM_KIND_COLLECTION"},
+		{name: "NOT", filter: "NOT item.kind = ITEM_KIND_ASSET"},
+		{name: "!=", filter: "item.kind != ITEM_KIND_ASSET"},
+		{name: "kind を2回", filter: "item.kind = ITEM_KIND_ASSET AND item.kind = ITEM_KIND_ASSET"},
+		{name: "UNSPECIFIED", filter: "item.kind = ITEM_KIND_UNSPECIFIED"},
+		{name: "時刻の形式が不正", filter: `head_revision.content.create_time >= "yesterday"`},
+		{name: "時刻を = で比較", filter: `head_revision.content.create_time = "2026-10-01T00:00:00Z"`},
+		{name: "構文が不正", filter: "item.kind = ("},
+	}
+	for _, tt := range tests {
+		_, err := c.ListItems(context.Background(), connect.NewRequest(&apiv1alpha1.ListItemsRequest{Filter: tt.filter}))
 		wantCode(t, tt.name, err, connect.CodeInvalidArgument)
 	}
 }

@@ -32,10 +32,11 @@ func (s *itemService) ListItems(ctx context.Context, req *connect.Request[apiv1a
 	if err != nil {
 		return nil, invalidArgument("order_by", err)
 	}
-	if msg.GetFilter() != "" {
-		return nil, invalidArgument("filter", errors.New("filter はまだサポートされていません"))
+	opts, err := parseItemFilter(msg.GetFilter())
+	if err != nil {
+		return nil, invalidArgument("filter", err)
 	}
-	opts := itemstore.ListOptions{Order: order, Limit: limit}
+	opts.Order, opts.Limit = order, limit
 
 	sum := requestChecksum(msg)
 	if t := msg.GetPageToken(); t != "" {
