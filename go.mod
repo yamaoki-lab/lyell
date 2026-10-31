@@ -7,6 +7,7 @@ toolchain go1.27.3
 require (
 	connectrpc.com/connect v1.21.1
 	github.com/google/uuid v1.6.0
+	go.einride.tech/aip v0.86.3
 	google.golang.org/protobuf v1.36.12
 	modernc.org/sqlite v1.59.0
 )
