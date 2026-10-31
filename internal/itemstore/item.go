@@ -14,7 +14,7 @@ import (
 	"github.com/yamaoki-lab/lyell/internal/blobstore"
 )
 
-// ID は, item と revision の ID で, UUIDv7 (16バイト). 先頭に生成時刻 (ミリ秒) を含むので, 生成順に並ぶ.
+// ID は, item と revision の識別子で, UUIDv7 (16バイト). 先頭に生成時刻 (ミリ秒) を含むので, 生成順に並ぶ.
 type ID [16]byte
 
 // NewID は, 現在時刻から新しい ID を生成する.
@@ -31,7 +31,7 @@ func (id ID) String() string {
 	return uuid.UUID(id).String()
 }
 
-// Kind は, item の種類. 作成後は変わらない.
+// Kind は, item の種類. 作成後は変更不可.
 type Kind string
 
 const (
@@ -41,7 +41,7 @@ const (
 	KindCollection Kind = "collection"
 )
 
-// Item は, item の記録.
+// Item は, item のレコード.
 type Item struct {
 	ID   ID
 	Kind Kind
@@ -55,7 +55,7 @@ type Content struct {
 	// AuthorUser と AuthorMachine は, 記録した利用者とマシン. どちらも必須. 認証を経ない経路からの記録では, 両方を "anonymous" にする.
 	AuthorUser    string
 	AuthorMachine string
-	// Blob は, 中身のバイト列 (blob) の SHA-256. 記録した後は, バイト列が手元にあるか (転送の対象から外した場合等) とは独立している. 手元にあるかは blobstore に問い合わせる.
+	// Blob は, 中身のバイト列 (blob) の SHA-256. 記録した後は, バイト列がローカルに保持されているか (転送の対象から外した場合等) とは無関係である. ローカルに存在するかは blobstore に問い合わせる.
 	Blob blobstore.Sum
 	// BlobSize は, blob のバイト数. 記録時は itemstore が blobstore から取得した値を入れるので, 渡された値は使用しない.
 	BlobSize int64
@@ -63,23 +63,23 @@ type Content struct {
 	Body []byte
 }
 
-// Revision は, revision の記録.
+// Revision は, revision のレコード.
 type Revision struct {
 	ID      ID
 	ItemID  ID
-	Parents []ID // 1つ前の revision. 最初の revision には無い. 統合では, 別の item の revision も親になる
+	Parents []ID // 1つ前の revision. 初回の revision には存在しない. item の統合では, 別の item の revision も親になる.
 	// Content は中身. 間引かれていれば nil.
 	Content *Content
 }
 
 // ErrNotFound は, 指定した item や revision が存在しない時のエラー.
-var ErrNotFound = errors.New("itemstore: 存在しない")
+var ErrNotFound = errors.New("itemstore: 見つかりません")
 
 // ErrBlobNotFound は, Data を渡さずに記録しようとした時に, Content.Blob の blob が存在しないことを表す.
-var ErrBlobNotFound = errors.New("itemstore: blob が存在しない")
+var ErrBlobNotFound = errors.New("itemstore: blob が見つかりません")
 
 // ErrInvalid は, 引数が不正な時のエラー (不明な種類, 親の重複等). 呼び出し側の誤りなので, 同じ引数で再試行しても成功しない. API では, サーバの故障と区別して呼び出し側に返すために使う.
-var ErrInvalid = errors.New("itemstore: 引数が不正")
+var ErrInvalid = errors.New("itemstore: 引数が不正です")
 
 // NewItem は, CreateItem で作成する item の内容. フィールドを追加した時に呼び出し側のコードの変更を不要にするため, 引数を並べずに構造体で受け取る. 指定しなかったフィールドはゼロ値になる.
 type NewItem struct {
@@ -120,7 +120,7 @@ func (s *Store) CreateItem(ctx context.Context, n NewItem) (Item, error) {
 	if err != nil {
 		return Item{}, err
 	}
-	defer func() { _ = tx.Rollback() }() // Commit の後は何もしない
+	defer func() { _ = tx.Rollback() }() // Commit 済みの場合は何も行わない
 
 	// items と revisions は互いを参照するが, 外部キーの検査はコミット時に行われるので, 挿入の順序は問わない.
 	if _, err := tx.ExecContext(ctx, "INSERT INTO items (id, kind, head) VALUES (?, ?, ?)", itemID[:], string(kind), revID[:]); err != nil {
@@ -129,7 +129,7 @@ func (s *Store) CreateItem(ctx context.Context, n NewItem) (Item, error) {
 	if err := insertRevision(ctx, tx, revID, itemID, content); err != nil {
 		return Item{}, err
 	}
-	// 外部キーの検査はここで行われるので, このエラーを無視すると, 書き込めたと誤認したまま何も残らない.
+	// 外部キーの検査はここで行われるので, このエラーを無視すると, 書き込みに成功したと誤認したまま何も保存されない.
 	if err := tx.Commit(); err != nil {
 		return Item{}, err
 	}
@@ -142,7 +142,7 @@ func (s *Store) CreateItem(ctx context.Context, n NewItem) (Item, error) {
 func (s *Store) placeBlob(ctx context.Context, sum blobstore.Sum, data io.Reader, opts []blobstore.PutOption) (int64, error) {
 	if data != nil {
 		if _, err := s.blobs.Put(ctx, sum, data, opts...); err != nil {
-			return 0, fmt.Errorf("blob を書き込めない: %w", err)
+			return 0, fmt.Errorf("blob の書き込みに失敗しました: %w", err)
 		}
 	}
 	size, err := s.blobs.Size(ctx, sum)
@@ -150,7 +150,7 @@ func (s *Store) placeBlob(ctx context.Context, sum blobstore.Sum, data io.Reader
 		return 0, fmt.Errorf("blob %s: %w", sum, ErrBlobNotFound)
 	}
 	if err != nil {
-		return 0, fmt.Errorf("blob %s のサイズを取得できない: %w", sum, err)
+		return 0, fmt.Errorf("blob %s のサイズ取得に失敗しました: %w", sum, err)
 	}
 	return size, nil
 }
@@ -190,7 +190,7 @@ func (s *Store) Item(ctx context.Context, id ID) (Item, error) {
 
 // Revision は, id の revision を, 親の一覧と一緒に返す. 間引かれていれば Content は nil になるが, 親は辿れる. 存在しなければ ErrNotFound を返す.
 func (s *Store) Revision(ctx context.Context, id ID) (Revision, error) {
-	// 行と親の一覧を同じ時点のスナップショットから読むため, 1つの読み取り専用のトランザクションで読む.
+	// 行と親の一覧を同じ時点のスナップショットから取得するため, 1つの読み取り専用のトランザクションで読み取る.
 	tx, err := s.read.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return Revision{}, err
@@ -198,16 +198,11 @@ func (s *Store) Revision(ctx context.Context, id ID) (Revision, error) {
 	defer func() { _ = tx.Rollback() }()
 
 	var (
-		itemID                    []byte
-		createdAt, blobSize       sql.NullInt64
-		authorUser, authorMachine sql.NullString
-		blob, body                []byte
-		thinned                   bool
+		itemID []byte
+		cols   contentColumns
 	)
-	// 長さ0の BLOB は, ドライバによっては nil として読み取られる. 間引かれたかどうかは, body が nil かではなく, IS NULL で DB に問い合わせて判定する.
-	err = tx.QueryRowContext(ctx, `
-SELECT item_id, created_at, author_user, author_machine, blob_sha256, blob_size, body, body IS NULL
-FROM revisions WHERE id = ?`, id[:]).Scan(&itemID, &createdAt, &authorUser, &authorMachine, &blob, &blobSize, &body, &thinned)
+	err = tx.QueryRowContext(ctx, "SELECT item_id, "+contentColumnList+" FROM revisions WHERE id = ?", id[:]).
+		Scan(append([]any{&itemID}, cols.dest()...)...)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Revision{}, fmt.Errorf("revision %s: %w", id, ErrNotFound)
 	}
@@ -219,50 +214,81 @@ FROM revisions WHERE id = ?`, id[:]).Scan(&itemID, &createdAt, &authorUser, &aut
 	if err := scanID(itemID, &rev.ItemID); err != nil {
 		return Revision{}, err
 	}
-	// 間引かれていない revision が中身の列を全て持つことは, テーブルの CHECK 制約が保証している.
-	if !thinned {
-		if body == nil {
-			body = []byte{}
-		}
-		c := &Content{
-			CreatedAt:     time.UnixMilli(createdAt.Int64).UTC(),
-			AuthorUser:    authorUser.String,
-			AuthorMachine: authorMachine.String,
-			BlobSize:      blobSize.Int64,
-			Body:          body,
-		}
-		if len(blob) != len(c.Blob) {
-			return Revision{}, fmt.Errorf("revision %s の blob_sha256 が %d バイト", id, len(blob))
-		}
-		copy(c.Blob[:], blob)
-		rev.Content = c
-	}
-
-	rows, err := tx.QueryContext(ctx, "SELECT parent_id FROM revision_parents WHERE revision_id = ? ORDER BY parent_id", id[:])
-	if err != nil {
+	if rev.Content, err = cols.content(id); err != nil {
 		return Revision{}, err
 	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		var raw []byte
-		if err := rows.Scan(&raw); err != nil {
-			return Revision{}, err
-		}
-		var parent ID
-		if err := scanID(raw, &parent); err != nil {
-			return Revision{}, err
-		}
-		rev.Parents = append(rev.Parents, parent)
-	}
-	if err := rows.Err(); err != nil {
+	if rev.Parents, err = readParents(ctx, tx, id); err != nil {
 		return Revision{}, err
 	}
 	return rev, nil
 }
 
+// contentColumnList は, revisions から中身を取得する際のカラム一覧. contentColumns.dest と同じ順序で定義する.
+//
+// 長さ0の BLOB は, ドライバによっては nil として読み取られる. 間引かれたかどうかは, body が nil かではなく, IS NULL で DB に問い合わせて判定する.
+const contentColumnList = "created_at, author_user, author_machine, blob_sha256, blob_size, body, body IS NULL"
+
+// contentColumns は, contentColumnList のカラム値を読み出す構造体.
+type contentColumns struct {
+	createdAt, blobSize       sql.NullInt64
+	authorUser, authorMachine sql.NullString
+	blob, body                []byte
+	thinned                   bool
+}
+
+func (c *contentColumns) dest() []any {
+	return []any{&c.createdAt, &c.authorUser, &c.authorMachine, &c.blob, &c.blobSize, &c.body, &c.thinned}
+}
+
+// content は, 読み取った列から revision id の中身を組み立てる. 間引かれていれば nil を返す.
+func (c *contentColumns) content(id ID) (*Content, error) {
+	if c.thinned {
+		return nil, nil
+	}
+	// 間引かれていない revision が中身の列を全て持つことは, テーブルの CHECK 制約が保証している.
+	body := c.body
+	if body == nil {
+		body = []byte{}
+	}
+	content := &Content{
+		CreatedAt:     time.UnixMilli(c.createdAt.Int64).UTC(),
+		AuthorUser:    c.authorUser.String,
+		AuthorMachine: c.authorMachine.String,
+		BlobSize:      c.blobSize.Int64,
+		Body:          body,
+	}
+	if len(c.blob) != len(content.Blob) {
+		return nil, fmt.Errorf("revision %s の blob_sha256 のバイト数が不正です (%d バイト)", id, len(c.blob))
+	}
+	copy(content.Blob[:], c.blob)
+	return content, nil
+}
+
+// readParents は, revision id の親を ID 順に返す. 最初の revision なら nil を返す.
+func readParents(ctx context.Context, tx *sql.Tx, id ID) ([]ID, error) {
+	rows, err := tx.QueryContext(ctx, "SELECT parent_id FROM revision_parents WHERE revision_id = ? ORDER BY parent_id", id[:])
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var parents []ID
+	for rows.Next() {
+		var raw []byte
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		var parent ID
+		if err := scanID(raw, &parent); err != nil {
+			return nil, err
+		}
+		parents = append(parents, parent)
+	}
+	return parents, rows.Err()
+}
+
 func scanID(raw []byte, id *ID) error {
 	if len(raw) != len(id) {
-		return fmt.Errorf("ID が %d バイト (16バイトであるべき)", len(raw))
+		return fmt.Errorf("ID が %d バイトです (16バイトである必要があります)", len(raw))
 	}
 	copy(id[:], raw)
 	return nil
@@ -273,15 +299,15 @@ func (k Kind) validate() error {
 	case KindAsset, KindCollection:
 		return nil
 	}
-	return fmt.Errorf("%w: 不明な item の種類 %q", ErrInvalid, k)
+	return fmt.Errorf("%w: item 種別 %q は不明です", ErrInvalid, k)
 }
 
 func (c Content) validate() error {
 	if c.CreatedAt.IsZero() {
-		return fmt.Errorf("%w: 記録時刻 (CreatedAt) が指定されていない", ErrInvalid)
+		return fmt.Errorf("%w: 記録時刻 (CreatedAt) が指定されていません", ErrInvalid)
 	}
 	if c.AuthorUser == "" || c.AuthorMachine == "" {
-		return fmt.Errorf("%w: 記録した利用者とマシン (AuthorUser, AuthorMachine) は両方必須. 認証を経ない経路では anonymous にする", ErrInvalid)
+		return fmt.Errorf("%w: 記録した利用者とマシン (AuthorUser, AuthorMachine) は両方必須です. 認証を経ない経路では anonymous にしてください", ErrInvalid)
 	}
 	return nil
 }
