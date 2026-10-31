@@ -54,6 +54,10 @@ func (s *itemService) GetItem(ctx context.Context, req *connect.Request[apiv1alp
 	return connect.NewResponse(&apiv1alpha1.GetItemResponse{Item: itemToProto(item)}), nil
 }
 
+func (s *itemService) ListItems(context.Context, *connect.Request[apiv1alpha1.ListItemsRequest]) (*connect.Response[apiv1alpha1.ListItemsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ListItems はまだ実装されていません"))
+}
+
 func (s *itemService) GetRevision(ctx context.Context, req *connect.Request[apiv1alpha1.GetRevisionRequest]) (*connect.Response[apiv1alpha1.GetRevisionResponse], error) {
 	id, err := parseID(req.Msg.GetId())
 	if err != nil {
