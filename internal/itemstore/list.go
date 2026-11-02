@@ -53,7 +53,7 @@ func (s *Store) ListItems(ctx context.Context, o ListOptions) (ItemList, error) 
 	if err := o.validate(); err != nil {
 		return ItemList{}, err
 	}
-	where, args := o.conditions()
+	where, args, usesRevisions := o.conditions()
 
 	tx, err := s.read.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
@@ -61,8 +61,13 @@ func (s *Store) ListItems(ctx context.Context, o ListOptions) (ItemList, error) 
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	// 件数は, 条件が revisions の列を参照する場合のみ JOIN して数える. items の外部キーにより head は必ず revisions に存在するため, JOIN しなくても件数は変わらない. JOIN すると item ごとに revisions を参照することになる.
+	countFrom := " FROM items"
+	if usesRevisions {
+		countFrom += " JOIN revisions ON revisions.id = items.head"
+	}
 	var list ItemList
-	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM items JOIN revisions ON revisions.id = items.head"+whereClause(where), args...).Scan(&list.TotalSize); err != nil {
+	if err := tx.QueryRowContext(ctx, "SELECT count(*)"+countFrom+whereClause(where), args...).Scan(&list.TotalSize); err != nil {
 		return ItemList{}, err
 	}
 
@@ -113,12 +118,8 @@ func (o ListOptions) validate() error {
 	return fmt.Errorf("%w: 並び順 %d は不明です", ErrInvalid, o.Order)
 }
 
-// conditions は, StartAfter を除いた条件を, WHERE 句の条件と引数で返す.
-func (o ListOptions) conditions() ([]string, []any) {
-	var (
-		where []string
-		args  []any
-	)
+// conditions は, StartAfter を除いた条件を, WHERE 句の条件式と引数として返す. usesRevisions は, 条件が revisions の列を参照するかどうかを示す.
+func (o ListOptions) conditions() (where []string, args []any, usesRevisions bool) {
 	if o.Kind != "" {
 		where = append(where, "items.kind = ?")
 		args = append(args, string(o.Kind))
@@ -126,12 +127,14 @@ func (o ListOptions) conditions() ([]string, []any) {
 	if !o.UpdatedSince.IsZero() {
 		where = append(where, "revisions.created_at >= ?")
 		args = append(args, ceilUnixMilli(o.UpdatedSince))
+		usesRevisions = true
 	}
 	if !o.UpdatedBefore.IsZero() {
 		where = append(where, "revisions.created_at < ?")
 		args = append(args, ceilUnixMilli(o.UpdatedBefore))
+		usesRevisions = true
 	}
-	return where, args
+	return where, args, usesRevisions
 }
 
 func whereClause(where []string) string {
