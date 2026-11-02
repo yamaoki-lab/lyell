@@ -24,9 +24,9 @@ const (
 // CreateItemRequest は, CreateItem のリクエスト.
 type CreateItemRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// kind は item の種類. 現在は ITEM_KIND_ASSET だけを受け付ける.
+	// kind は item の種類. 現在は ITEM_KIND_ASSET のみを受け付ける.
 	Kind ItemKind `protobuf:"varint,1,opt,name=kind,proto3,enum=lyell.api.v1alpha1.ItemKind" json:"kind,omitempty"`
-	// blob_sha256 は, 最初の revision の中身の SHA-256 (小文字の16進数64文字). 先に保存しておく.
+	// blob_sha256 は, 最初の revision の中身の SHA-256 (小文字の16進数64文字). 事前に保存しておく必要がある.
 	BlobSha256    string `protobuf:"bytes,2,opt,name=blob_sha256,json=blobSha256,proto3" json:"blob_sha256,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -134,7 +134,7 @@ func (x *CreateItemResponse) GetRevision() *Revision {
 // GetItemRequest は, GetItem のリクエスト.
 type GetItemRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// id は, 読み取る item の ID.
+	// id は, 取得する item の ID.
 	Id            string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -180,7 +180,7 @@ func (x *GetItemRequest) GetId() string {
 // GetItemResponse は, GetItem のレスポンス.
 type GetItemResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// item は, 読み取った item.
+	// item は, 取得した item.
 	Item          *Item `protobuf:"bytes,1,opt,name=item,proto3" json:"item,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -223,10 +223,204 @@ func (x *GetItemResponse) GetItem() *Item {
 	return nil
 }
 
+// ListItemsRequest は, ListItems のリクエスト.
+type ListItemsRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// page_size は, 1ページあたりに返す最大件数. 0 の場合は 128 件. 1024 を超える値は 1024 として扱う. 負の値は INVALID_ARGUMENT になる.
+	PageSize int32 `protobuf:"varint,1,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	// page_token は, 前のレスポンスの next_page_token. 空なら先頭から返す. page_size 以外のフィールドは, そのトークンを受け取った時と同じ値を指定する. 異なる場合は INVALID_ARGUMENT になる.
+	PageToken string `protobuf:"bytes,2,opt,name=page_token,json=pageToken,proto3" json:"page_token,omitempty"`
+	// filter は, 返す item の条件 (AIP-160). フィールド名は ItemEntry を起点に指定する. 空なら全ての item を返す.
+	// 現在受け付けるのは, item.kind の等値比較と, head_revision.content.create_time (最後に head を進めた時刻) の比較を, AND で結合した条件のみ. それ以外は INVALID_ARGUMENT になる.
+	// 例: `item.kind = ITEM_KIND_ASSET AND head_revision.content.create_time >= "2026-10-01T00:00:00Z"`
+	Filter string `protobuf:"bytes,3,opt,name=filter,proto3" json:"filter,omitempty"`
+	// order_by は, 並び順 (AIP-132). フィールド名は ItemEntry を起点に指定する. 空なら "item.id desc" (新しい順). 現在受け付けるのは "item.id" (古い順) と "item.id desc" のみで, それ以外は INVALID_ARGUMENT になる.
+	OrderBy       string `protobuf:"bytes,4,opt,name=order_by,json=orderBy,proto3" json:"order_by,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListItemsRequest) Reset() {
+	*x = ListItemsRequest{}
+	mi := &file_lyell_api_v1alpha1_item_service_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListItemsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListItemsRequest) ProtoMessage() {}
+
+func (x *ListItemsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_lyell_api_v1alpha1_item_service_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListItemsRequest.ProtoReflect.Descriptor instead.
+func (*ListItemsRequest) Descriptor() ([]byte, []int) {
+	return file_lyell_api_v1alpha1_item_service_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *ListItemsRequest) GetPageSize() int32 {
+	if x != nil {
+		return x.PageSize
+	}
+	return 0
+}
+
+func (x *ListItemsRequest) GetPageToken() string {
+	if x != nil {
+		return x.PageToken
+	}
+	return ""
+}
+
+func (x *ListItemsRequest) GetFilter() string {
+	if x != nil {
+		return x.Filter
+	}
+	return ""
+}
+
+func (x *ListItemsRequest) GetOrderBy() string {
+	if x != nil {
+		return x.OrderBy
+	}
+	return ""
+}
+
+// ListItemsResponse は, ListItems のレスポンス.
+type ListItemsResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// entries は, このページの item 一覧. order_by で指定された順に並ぶ.
+	Entries []*ItemEntry `protobuf:"bytes,1,rep,name=entries,proto3" json:"entries,omitempty"`
+	// next_page_token は, 次ページを取得する際に page_token に渡す値. 空なら最後のページ.
+	NextPageToken string `protobuf:"bytes,2,opt,name=next_page_token,json=nextPageToken,proto3" json:"next_page_token,omitempty"`
+	// total_size は, filter に一致する item の総数 (全ページの合計).
+	TotalSize     int32 `protobuf:"varint,3,opt,name=total_size,json=totalSize,proto3" json:"total_size,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListItemsResponse) Reset() {
+	*x = ListItemsResponse{}
+	mi := &file_lyell_api_v1alpha1_item_service_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListItemsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListItemsResponse) ProtoMessage() {}
+
+func (x *ListItemsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_lyell_api_v1alpha1_item_service_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListItemsResponse.ProtoReflect.Descriptor instead.
+func (*ListItemsResponse) Descriptor() ([]byte, []int) {
+	return file_lyell_api_v1alpha1_item_service_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *ListItemsResponse) GetEntries() []*ItemEntry {
+	if x != nil {
+		return x.Entries
+	}
+	return nil
+}
+
+func (x *ListItemsResponse) GetNextPageToken() string {
+	if x != nil {
+		return x.NextPageToken
+	}
+	return ""
+}
+
+func (x *ListItemsResponse) GetTotalSize() int32 {
+	if x != nil {
+		return x.TotalSize
+	}
+	return 0
+}
+
+// ItemEntry は, ListItems が返す1件分のデータ. item と, その head の revision が必ず組で取得できるよう, 1つのメッセージにまとめている.
+type ItemEntry struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// item は, item.
+	Item *Item `protobuf:"bytes,1,opt,name=item,proto3" json:"item,omitempty"`
+	// head_revision は, item の head の revision. 親の一覧を含む.
+	HeadRevision  *Revision `protobuf:"bytes,2,opt,name=head_revision,json=headRevision,proto3" json:"head_revision,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ItemEntry) Reset() {
+	*x = ItemEntry{}
+	mi := &file_lyell_api_v1alpha1_item_service_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ItemEntry) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ItemEntry) ProtoMessage() {}
+
+func (x *ItemEntry) ProtoReflect() protoreflect.Message {
+	mi := &file_lyell_api_v1alpha1_item_service_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ItemEntry.ProtoReflect.Descriptor instead.
+func (*ItemEntry) Descriptor() ([]byte, []int) {
+	return file_lyell_api_v1alpha1_item_service_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *ItemEntry) GetItem() *Item {
+	if x != nil {
+		return x.Item
+	}
+	return nil
+}
+
+func (x *ItemEntry) GetHeadRevision() *Revision {
+	if x != nil {
+		return x.HeadRevision
+	}
+	return nil
+}
+
 // GetRevisionRequest は, GetRevision のリクエスト.
 type GetRevisionRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// id は, 読み取る revision の ID.
+	// id は, 取得する revision の ID.
 	Id            string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -234,7 +428,7 @@ type GetRevisionRequest struct {
 
 func (x *GetRevisionRequest) Reset() {
 	*x = GetRevisionRequest{}
-	mi := &file_lyell_api_v1alpha1_item_service_proto_msgTypes[4]
+	mi := &file_lyell_api_v1alpha1_item_service_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -246,7 +440,7 @@ func (x *GetRevisionRequest) String() string {
 func (*GetRevisionRequest) ProtoMessage() {}
 
 func (x *GetRevisionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_lyell_api_v1alpha1_item_service_proto_msgTypes[4]
+	mi := &file_lyell_api_v1alpha1_item_service_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -259,7 +453,7 @@ func (x *GetRevisionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetRevisionRequest.ProtoReflect.Descriptor instead.
 func (*GetRevisionRequest) Descriptor() ([]byte, []int) {
-	return file_lyell_api_v1alpha1_item_service_proto_rawDescGZIP(), []int{4}
+	return file_lyell_api_v1alpha1_item_service_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *GetRevisionRequest) GetId() string {
@@ -272,7 +466,7 @@ func (x *GetRevisionRequest) GetId() string {
 // GetRevisionResponse は, GetRevision のレスポンス.
 type GetRevisionResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// revision は, 読み取った revision.
+	// revision は, 取得した revision.
 	Revision      *Revision `protobuf:"bytes,1,opt,name=revision,proto3" json:"revision,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -280,7 +474,7 @@ type GetRevisionResponse struct {
 
 func (x *GetRevisionResponse) Reset() {
 	*x = GetRevisionResponse{}
-	mi := &file_lyell_api_v1alpha1_item_service_proto_msgTypes[5]
+	mi := &file_lyell_api_v1alpha1_item_service_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -292,7 +486,7 @@ func (x *GetRevisionResponse) String() string {
 func (*GetRevisionResponse) ProtoMessage() {}
 
 func (x *GetRevisionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_lyell_api_v1alpha1_item_service_proto_msgTypes[5]
+	mi := &file_lyell_api_v1alpha1_item_service_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -305,7 +499,7 @@ func (x *GetRevisionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetRevisionResponse.ProtoReflect.Descriptor instead.
 func (*GetRevisionResponse) Descriptor() ([]byte, []int) {
-	return file_lyell_api_v1alpha1_item_service_proto_rawDescGZIP(), []int{5}
+	return file_lyell_api_v1alpha1_item_service_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *GetRevisionResponse) GetRevision() *Revision {
@@ -320,11 +514,11 @@ type CommitRevisionRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// item_id は, revision を追加する item の ID.
 	ItemId string `protobuf:"bytes,1,opt,name=item_id,json=itemId,proto3" json:"item_id,omitempty"`
-	// expected_head は, 呼び出し側が前提としている現在の head. 現在の head と異なれば ABORTED になる.
+	// expected_head は, 呼び出し元が想定している現在の head. 現在の head と異なれば ABORTED を返す.
 	ExpectedHead string `protobuf:"bytes,2,opt,name=expected_head,json=expectedHead,proto3" json:"expected_head,omitempty"`
-	// parents は, 新しい revision の親. 空なら expected_head だけを親にする (最も一般的な早送り). 指定する場合は expected_head を必ず含める.
+	// parents は, 新しい revision の親. 空なら expected_head のみを親にする (最も一般的な fast-forward). 指定する場合は expected_head を必ず含める.
 	Parents []string `protobuf:"bytes,3,rep,name=parents,proto3" json:"parents,omitempty"`
-	// blob_sha256 は, 新しい revision の中身の SHA-256 (小文字の16進数64文字). 先に保存しておく.
+	// blob_sha256 は, 新しい revision の中身の SHA-256 (小文字の16進数64文字). 事前に保存しておく必要がある.
 	BlobSha256    string `protobuf:"bytes,4,opt,name=blob_sha256,json=blobSha256,proto3" json:"blob_sha256,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -332,7 +526,7 @@ type CommitRevisionRequest struct {
 
 func (x *CommitRevisionRequest) Reset() {
 	*x = CommitRevisionRequest{}
-	mi := &file_lyell_api_v1alpha1_item_service_proto_msgTypes[6]
+	mi := &file_lyell_api_v1alpha1_item_service_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -344,7 +538,7 @@ func (x *CommitRevisionRequest) String() string {
 func (*CommitRevisionRequest) ProtoMessage() {}
 
 func (x *CommitRevisionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_lyell_api_v1alpha1_item_service_proto_msgTypes[6]
+	mi := &file_lyell_api_v1alpha1_item_service_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -357,7 +551,7 @@ func (x *CommitRevisionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CommitRevisionRequest.ProtoReflect.Descriptor instead.
 func (*CommitRevisionRequest) Descriptor() ([]byte, []int) {
-	return file_lyell_api_v1alpha1_item_service_proto_rawDescGZIP(), []int{6}
+	return file_lyell_api_v1alpha1_item_service_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *CommitRevisionRequest) GetItemId() string {
@@ -391,7 +585,7 @@ func (x *CommitRevisionRequest) GetBlobSha256() string {
 // CommitRevisionResponse は, CommitRevision のレスポンス.
 type CommitRevisionResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// revision は, 追加した revision. item の head は, この revision の ID に進んでいる.
+	// revision は, 追加した revision. item の head は, この revision の ID へ進められる.
 	Revision      *Revision `protobuf:"bytes,1,opt,name=revision,proto3" json:"revision,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -399,7 +593,7 @@ type CommitRevisionResponse struct {
 
 func (x *CommitRevisionResponse) Reset() {
 	*x = CommitRevisionResponse{}
-	mi := &file_lyell_api_v1alpha1_item_service_proto_msgTypes[7]
+	mi := &file_lyell_api_v1alpha1_item_service_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -411,7 +605,7 @@ func (x *CommitRevisionResponse) String() string {
 func (*CommitRevisionResponse) ProtoMessage() {}
 
 func (x *CommitRevisionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_lyell_api_v1alpha1_item_service_proto_msgTypes[7]
+	mi := &file_lyell_api_v1alpha1_item_service_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -424,7 +618,7 @@ func (x *CommitRevisionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CommitRevisionResponse.ProtoReflect.Descriptor instead.
 func (*CommitRevisionResponse) Descriptor() ([]byte, []int) {
-	return file_lyell_api_v1alpha1_item_service_proto_rawDescGZIP(), []int{7}
+	return file_lyell_api_v1alpha1_item_service_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *CommitRevisionResponse) GetRevision() *Revision {
@@ -434,10 +628,10 @@ func (x *CommitRevisionResponse) GetRevision() *Revision {
 	return nil
 }
 
-// HeadMoved は, CommitRevision が ABORTED を返す時に付ける詳細. 呼び出し側は, 読み直さずに現在の head を取得し, 統合の処理へ進める.
+// HeadMoved は, CommitRevision が ABORTED を返す時に付与する詳細情報. 呼び出し元は, 再取得せずに現在の head を取得し, 分岐の解決へ進めることができる.
 type HeadMoved struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// current_head は, 拒否した時点の item の head.
+	// current_head は, リクエストが拒否された時点の item の head.
 	CurrentHead   string `protobuf:"bytes,1,opt,name=current_head,json=currentHead,proto3" json:"current_head,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -445,7 +639,7 @@ type HeadMoved struct {
 
 func (x *HeadMoved) Reset() {
 	*x = HeadMoved{}
-	mi := &file_lyell_api_v1alpha1_item_service_proto_msgTypes[8]
+	mi := &file_lyell_api_v1alpha1_item_service_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -457,7 +651,7 @@ func (x *HeadMoved) String() string {
 func (*HeadMoved) ProtoMessage() {}
 
 func (x *HeadMoved) ProtoReflect() protoreflect.Message {
-	mi := &file_lyell_api_v1alpha1_item_service_proto_msgTypes[8]
+	mi := &file_lyell_api_v1alpha1_item_service_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -470,7 +664,7 @@ func (x *HeadMoved) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HeadMoved.ProtoReflect.Descriptor instead.
 func (*HeadMoved) Descriptor() ([]byte, []int) {
-	return file_lyell_api_v1alpha1_item_service_proto_rawDescGZIP(), []int{8}
+	return file_lyell_api_v1alpha1_item_service_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *HeadMoved) GetCurrentHead() string {
@@ -495,7 +689,21 @@ const file_lyell_api_v1alpha1_item_service_proto_rawDesc = "" +
 	"\x0eGetItemRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\"?\n" +
 	"\x0fGetItemResponse\x12,\n" +
-	"\x04item\x18\x01 \x01(\v2\x18.lyell.api.v1alpha1.ItemR\x04item\"$\n" +
+	"\x04item\x18\x01 \x01(\v2\x18.lyell.api.v1alpha1.ItemR\x04item\"\x81\x01\n" +
+	"\x10ListItemsRequest\x12\x1b\n" +
+	"\tpage_size\x18\x01 \x01(\x05R\bpageSize\x12\x1d\n" +
+	"\n" +
+	"page_token\x18\x02 \x01(\tR\tpageToken\x12\x16\n" +
+	"\x06filter\x18\x03 \x01(\tR\x06filter\x12\x19\n" +
+	"\border_by\x18\x04 \x01(\tR\aorderBy\"\x93\x01\n" +
+	"\x11ListItemsResponse\x127\n" +
+	"\aentries\x18\x01 \x03(\v2\x1d.lyell.api.v1alpha1.ItemEntryR\aentries\x12&\n" +
+	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\x12\x1d\n" +
+	"\n" +
+	"total_size\x18\x03 \x01(\x05R\ttotalSize\"|\n" +
+	"\tItemEntry\x12,\n" +
+	"\x04item\x18\x01 \x01(\v2\x18.lyell.api.v1alpha1.ItemR\x04item\x12A\n" +
+	"\rhead_revision\x18\x02 \x01(\v2\x1c.lyell.api.v1alpha1.RevisionR\fheadRevision\"$\n" +
 	"\x12GetRevisionRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\"O\n" +
 	"\x13GetRevisionResponse\x128\n" +
@@ -509,11 +717,12 @@ const file_lyell_api_v1alpha1_item_service_proto_rawDesc = "" +
 	"\x16CommitRevisionResponse\x128\n" +
 	"\brevision\x18\x01 \x01(\v2\x1c.lyell.api.v1alpha1.RevisionR\brevision\".\n" +
 	"\tHeadMoved\x12!\n" +
-	"\fcurrent_head\x18\x01 \x01(\tR\vcurrentHead2\x91\x03\n" +
+	"\fcurrent_head\x18\x01 \x01(\tR\vcurrentHead2\xf0\x03\n" +
 	"\vItemService\x12[\n" +
 	"\n" +
 	"CreateItem\x12%.lyell.api.v1alpha1.CreateItemRequest\x1a&.lyell.api.v1alpha1.CreateItemResponse\x12W\n" +
-	"\aGetItem\x12\".lyell.api.v1alpha1.GetItemRequest\x1a#.lyell.api.v1alpha1.GetItemResponse\"\x03\x90\x02\x01\x12c\n" +
+	"\aGetItem\x12\".lyell.api.v1alpha1.GetItemRequest\x1a#.lyell.api.v1alpha1.GetItemResponse\"\x03\x90\x02\x01\x12]\n" +
+	"\tListItems\x12$.lyell.api.v1alpha1.ListItemsRequest\x1a%.lyell.api.v1alpha1.ListItemsResponse\"\x03\x90\x02\x01\x12c\n" +
 	"\vGetRevision\x12&.lyell.api.v1alpha1.GetRevisionRequest\x1a'.lyell.api.v1alpha1.GetRevisionResponse\"\x03\x90\x02\x01\x12g\n" +
 	"\x0eCommitRevision\x12).lyell.api.v1alpha1.CommitRevisionRequest\x1a*.lyell.api.v1alpha1.CommitRevisionResponseBAZ?github.com/yamaoki-lab/lyell/gen/lyell/api/v1alpha1;apiv1alpha1b\x06proto3"
 
@@ -529,41 +738,49 @@ func file_lyell_api_v1alpha1_item_service_proto_rawDescGZIP() []byte {
 	return file_lyell_api_v1alpha1_item_service_proto_rawDescData
 }
 
-var file_lyell_api_v1alpha1_item_service_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_lyell_api_v1alpha1_item_service_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_lyell_api_v1alpha1_item_service_proto_goTypes = []any{
 	(*CreateItemRequest)(nil),      // 0: lyell.api.v1alpha1.CreateItemRequest
 	(*CreateItemResponse)(nil),     // 1: lyell.api.v1alpha1.CreateItemResponse
 	(*GetItemRequest)(nil),         // 2: lyell.api.v1alpha1.GetItemRequest
 	(*GetItemResponse)(nil),        // 3: lyell.api.v1alpha1.GetItemResponse
-	(*GetRevisionRequest)(nil),     // 4: lyell.api.v1alpha1.GetRevisionRequest
-	(*GetRevisionResponse)(nil),    // 5: lyell.api.v1alpha1.GetRevisionResponse
-	(*CommitRevisionRequest)(nil),  // 6: lyell.api.v1alpha1.CommitRevisionRequest
-	(*CommitRevisionResponse)(nil), // 7: lyell.api.v1alpha1.CommitRevisionResponse
-	(*HeadMoved)(nil),              // 8: lyell.api.v1alpha1.HeadMoved
-	(ItemKind)(0),                  // 9: lyell.api.v1alpha1.ItemKind
-	(*Item)(nil),                   // 10: lyell.api.v1alpha1.Item
-	(*Revision)(nil),               // 11: lyell.api.v1alpha1.Revision
+	(*ListItemsRequest)(nil),       // 4: lyell.api.v1alpha1.ListItemsRequest
+	(*ListItemsResponse)(nil),      // 5: lyell.api.v1alpha1.ListItemsResponse
+	(*ItemEntry)(nil),              // 6: lyell.api.v1alpha1.ItemEntry
+	(*GetRevisionRequest)(nil),     // 7: lyell.api.v1alpha1.GetRevisionRequest
+	(*GetRevisionResponse)(nil),    // 8: lyell.api.v1alpha1.GetRevisionResponse
+	(*CommitRevisionRequest)(nil),  // 9: lyell.api.v1alpha1.CommitRevisionRequest
+	(*CommitRevisionResponse)(nil), // 10: lyell.api.v1alpha1.CommitRevisionResponse
+	(*HeadMoved)(nil),              // 11: lyell.api.v1alpha1.HeadMoved
+	(ItemKind)(0),                  // 12: lyell.api.v1alpha1.ItemKind
+	(*Item)(nil),                   // 13: lyell.api.v1alpha1.Item
+	(*Revision)(nil),               // 14: lyell.api.v1alpha1.Revision
 }
 var file_lyell_api_v1alpha1_item_service_proto_depIdxs = []int32{
-	9,  // 0: lyell.api.v1alpha1.CreateItemRequest.kind:type_name -> lyell.api.v1alpha1.ItemKind
-	10, // 1: lyell.api.v1alpha1.CreateItemResponse.item:type_name -> lyell.api.v1alpha1.Item
-	11, // 2: lyell.api.v1alpha1.CreateItemResponse.revision:type_name -> lyell.api.v1alpha1.Revision
-	10, // 3: lyell.api.v1alpha1.GetItemResponse.item:type_name -> lyell.api.v1alpha1.Item
-	11, // 4: lyell.api.v1alpha1.GetRevisionResponse.revision:type_name -> lyell.api.v1alpha1.Revision
-	11, // 5: lyell.api.v1alpha1.CommitRevisionResponse.revision:type_name -> lyell.api.v1alpha1.Revision
-	0,  // 6: lyell.api.v1alpha1.ItemService.CreateItem:input_type -> lyell.api.v1alpha1.CreateItemRequest
-	2,  // 7: lyell.api.v1alpha1.ItemService.GetItem:input_type -> lyell.api.v1alpha1.GetItemRequest
-	4,  // 8: lyell.api.v1alpha1.ItemService.GetRevision:input_type -> lyell.api.v1alpha1.GetRevisionRequest
-	6,  // 9: lyell.api.v1alpha1.ItemService.CommitRevision:input_type -> lyell.api.v1alpha1.CommitRevisionRequest
-	1,  // 10: lyell.api.v1alpha1.ItemService.CreateItem:output_type -> lyell.api.v1alpha1.CreateItemResponse
-	3,  // 11: lyell.api.v1alpha1.ItemService.GetItem:output_type -> lyell.api.v1alpha1.GetItemResponse
-	5,  // 12: lyell.api.v1alpha1.ItemService.GetRevision:output_type -> lyell.api.v1alpha1.GetRevisionResponse
-	7,  // 13: lyell.api.v1alpha1.ItemService.CommitRevision:output_type -> lyell.api.v1alpha1.CommitRevisionResponse
-	10, // [10:14] is the sub-list for method output_type
-	6,  // [6:10] is the sub-list for method input_type
-	6,  // [6:6] is the sub-list for extension type_name
-	6,  // [6:6] is the sub-list for extension extendee
-	0,  // [0:6] is the sub-list for field type_name
+	12, // 0: lyell.api.v1alpha1.CreateItemRequest.kind:type_name -> lyell.api.v1alpha1.ItemKind
+	13, // 1: lyell.api.v1alpha1.CreateItemResponse.item:type_name -> lyell.api.v1alpha1.Item
+	14, // 2: lyell.api.v1alpha1.CreateItemResponse.revision:type_name -> lyell.api.v1alpha1.Revision
+	13, // 3: lyell.api.v1alpha1.GetItemResponse.item:type_name -> lyell.api.v1alpha1.Item
+	6,  // 4: lyell.api.v1alpha1.ListItemsResponse.entries:type_name -> lyell.api.v1alpha1.ItemEntry
+	13, // 5: lyell.api.v1alpha1.ItemEntry.item:type_name -> lyell.api.v1alpha1.Item
+	14, // 6: lyell.api.v1alpha1.ItemEntry.head_revision:type_name -> lyell.api.v1alpha1.Revision
+	14, // 7: lyell.api.v1alpha1.GetRevisionResponse.revision:type_name -> lyell.api.v1alpha1.Revision
+	14, // 8: lyell.api.v1alpha1.CommitRevisionResponse.revision:type_name -> lyell.api.v1alpha1.Revision
+	0,  // 9: lyell.api.v1alpha1.ItemService.CreateItem:input_type -> lyell.api.v1alpha1.CreateItemRequest
+	2,  // 10: lyell.api.v1alpha1.ItemService.GetItem:input_type -> lyell.api.v1alpha1.GetItemRequest
+	4,  // 11: lyell.api.v1alpha1.ItemService.ListItems:input_type -> lyell.api.v1alpha1.ListItemsRequest
+	7,  // 12: lyell.api.v1alpha1.ItemService.GetRevision:input_type -> lyell.api.v1alpha1.GetRevisionRequest
+	9,  // 13: lyell.api.v1alpha1.ItemService.CommitRevision:input_type -> lyell.api.v1alpha1.CommitRevisionRequest
+	1,  // 14: lyell.api.v1alpha1.ItemService.CreateItem:output_type -> lyell.api.v1alpha1.CreateItemResponse
+	3,  // 15: lyell.api.v1alpha1.ItemService.GetItem:output_type -> lyell.api.v1alpha1.GetItemResponse
+	5,  // 16: lyell.api.v1alpha1.ItemService.ListItems:output_type -> lyell.api.v1alpha1.ListItemsResponse
+	8,  // 17: lyell.api.v1alpha1.ItemService.GetRevision:output_type -> lyell.api.v1alpha1.GetRevisionResponse
+	10, // 18: lyell.api.v1alpha1.ItemService.CommitRevision:output_type -> lyell.api.v1alpha1.CommitRevisionResponse
+	14, // [14:19] is the sub-list for method output_type
+	9,  // [9:14] is the sub-list for method input_type
+	9,  // [9:9] is the sub-list for extension type_name
+	9,  // [9:9] is the sub-list for extension extendee
+	0,  // [0:9] is the sub-list for field type_name
 }
 
 func init() { file_lyell_api_v1alpha1_item_service_proto_init() }
@@ -578,7 +795,7 @@ func file_lyell_api_v1alpha1_item_service_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_lyell_api_v1alpha1_item_service_proto_rawDesc), len(file_lyell_api_v1alpha1_item_service_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   9,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

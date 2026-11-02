@@ -37,6 +37,8 @@ const (
 	ItemServiceCreateItemProcedure = "/lyell.api.v1alpha1.ItemService/CreateItem"
 	// ItemServiceGetItemProcedure is the fully-qualified name of the ItemService's GetItem RPC.
 	ItemServiceGetItemProcedure = "/lyell.api.v1alpha1.ItemService/GetItem"
+	// ItemServiceListItemsProcedure is the fully-qualified name of the ItemService's ListItems RPC.
+	ItemServiceListItemsProcedure = "/lyell.api.v1alpha1.ItemService/ListItems"
 	// ItemServiceGetRevisionProcedure is the fully-qualified name of the ItemService's GetRevision RPC.
 	ItemServiceGetRevisionProcedure = "/lyell.api.v1alpha1.ItemService/GetRevision"
 	// ItemServiceCommitRevisionProcedure is the fully-qualified name of the ItemService's
@@ -46,15 +48,17 @@ const (
 
 // ItemServiceClient is a client for the lyell.api.v1alpha1.ItemService service.
 type ItemServiceClient interface {
-	// CreateItem は, item を, 保存済みの blob を指す最初の revision と一緒に作成する. 現在は asset だけを作成できる.
+	// CreateItem は, item を, 保存済みの blob を指す最初の revision と共に作成する. 現在は asset のみを作成できる.
 	// blob が存在しなければ, FAILED_PRECONDITION を返す.
 	CreateItem(context.Context, *connect.Request[v1alpha1.CreateItemRequest]) (*connect.Response[v1alpha1.CreateItemResponse], error)
 	// GetItem は, item を返す. 存在しなければ NOT_FOUND を返す.
 	GetItem(context.Context, *connect.Request[v1alpha1.GetItemRequest]) (*connect.Response[v1alpha1.GetItemResponse], error)
-	// GetRevision は, revision を, 親の一覧と一緒に返す. 存在しなければ NOT_FOUND を返す.
+	// ListItems は, item を, head の revision と共にページ単位で返す. 絞り込み (filter, AIP-160), 並び順 (order_by, AIP-132), 続きの取得 (page_token, AIP-158) は Google の API 設計指針に従う.
+	ListItems(context.Context, *connect.Request[v1alpha1.ListItemsRequest]) (*connect.Response[v1alpha1.ListItemsResponse], error)
+	// GetRevision は, revision を, 親の一覧と共に返す. 存在しなければ NOT_FOUND を返す.
 	GetRevision(context.Context, *connect.Request[v1alpha1.GetRevisionRequest]) (*connect.Response[v1alpha1.GetRevisionResponse], error)
-	// CommitRevision は, item に revision を追加し, item の head をその revision へ進める. 早送りだけを受け付ける.
-	// head が expected_head から動いていたら, 何も記録せずに ABORTED を返し, 詳細に HeadMoved を付ける.
+	// CommitRevision は, item に revision を追加し, item の head をその revision へ進める. fast-forward のみを受け付ける.
+	// head が expected_head から変更されていたら, 何も記録せずに ABORTED を返し, 詳細情報に HeadMoved を付与する.
 	// blob が存在しなければ, FAILED_PRECONDITION を返す.
 	CommitRevision(context.Context, *connect.Request[v1alpha1.CommitRevisionRequest]) (*connect.Response[v1alpha1.CommitRevisionResponse], error)
 }
@@ -83,6 +87,13 @@ func NewItemServiceClient(httpClient connect.HTTPClient, baseURL string, opts ..
 			connect.WithIdempotency(connect.IdempotencyNoSideEffects),
 			connect.WithClientOptions(opts...),
 		),
+		listItems: connect.NewClient[v1alpha1.ListItemsRequest, v1alpha1.ListItemsResponse](
+			httpClient,
+			baseURL+ItemServiceListItemsProcedure,
+			connect.WithSchema(itemServiceMethods.ByName("ListItems")),
+			connect.WithIdempotency(connect.IdempotencyNoSideEffects),
+			connect.WithClientOptions(opts...),
+		),
 		getRevision: connect.NewClient[v1alpha1.GetRevisionRequest, v1alpha1.GetRevisionResponse](
 			httpClient,
 			baseURL+ItemServiceGetRevisionProcedure,
@@ -103,6 +114,7 @@ func NewItemServiceClient(httpClient connect.HTTPClient, baseURL string, opts ..
 type itemServiceClient struct {
 	createItem     *connect.Client[v1alpha1.CreateItemRequest, v1alpha1.CreateItemResponse]
 	getItem        *connect.Client[v1alpha1.GetItemRequest, v1alpha1.GetItemResponse]
+	listItems      *connect.Client[v1alpha1.ListItemsRequest, v1alpha1.ListItemsResponse]
 	getRevision    *connect.Client[v1alpha1.GetRevisionRequest, v1alpha1.GetRevisionResponse]
 	commitRevision *connect.Client[v1alpha1.CommitRevisionRequest, v1alpha1.CommitRevisionResponse]
 }
@@ -117,6 +129,11 @@ func (c *itemServiceClient) GetItem(ctx context.Context, req *connect.Request[v1
 	return c.getItem.CallUnary(ctx, req)
 }
 
+// ListItems calls lyell.api.v1alpha1.ItemService.ListItems.
+func (c *itemServiceClient) ListItems(ctx context.Context, req *connect.Request[v1alpha1.ListItemsRequest]) (*connect.Response[v1alpha1.ListItemsResponse], error) {
+	return c.listItems.CallUnary(ctx, req)
+}
+
 // GetRevision calls lyell.api.v1alpha1.ItemService.GetRevision.
 func (c *itemServiceClient) GetRevision(ctx context.Context, req *connect.Request[v1alpha1.GetRevisionRequest]) (*connect.Response[v1alpha1.GetRevisionResponse], error) {
 	return c.getRevision.CallUnary(ctx, req)
@@ -129,15 +146,17 @@ func (c *itemServiceClient) CommitRevision(ctx context.Context, req *connect.Req
 
 // ItemServiceHandler is an implementation of the lyell.api.v1alpha1.ItemService service.
 type ItemServiceHandler interface {
-	// CreateItem は, item を, 保存済みの blob を指す最初の revision と一緒に作成する. 現在は asset だけを作成できる.
+	// CreateItem は, item を, 保存済みの blob を指す最初の revision と共に作成する. 現在は asset のみを作成できる.
 	// blob が存在しなければ, FAILED_PRECONDITION を返す.
 	CreateItem(context.Context, *connect.Request[v1alpha1.CreateItemRequest]) (*connect.Response[v1alpha1.CreateItemResponse], error)
 	// GetItem は, item を返す. 存在しなければ NOT_FOUND を返す.
 	GetItem(context.Context, *connect.Request[v1alpha1.GetItemRequest]) (*connect.Response[v1alpha1.GetItemResponse], error)
-	// GetRevision は, revision を, 親の一覧と一緒に返す. 存在しなければ NOT_FOUND を返す.
+	// ListItems は, item を, head の revision と共にページ単位で返す. 絞り込み (filter, AIP-160), 並び順 (order_by, AIP-132), 続きの取得 (page_token, AIP-158) は Google の API 設計指針に従う.
+	ListItems(context.Context, *connect.Request[v1alpha1.ListItemsRequest]) (*connect.Response[v1alpha1.ListItemsResponse], error)
+	// GetRevision は, revision を, 親の一覧と共に返す. 存在しなければ NOT_FOUND を返す.
 	GetRevision(context.Context, *connect.Request[v1alpha1.GetRevisionRequest]) (*connect.Response[v1alpha1.GetRevisionResponse], error)
-	// CommitRevision は, item に revision を追加し, item の head をその revision へ進める. 早送りだけを受け付ける.
-	// head が expected_head から動いていたら, 何も記録せずに ABORTED を返し, 詳細に HeadMoved を付ける.
+	// CommitRevision は, item に revision を追加し, item の head をその revision へ進める. fast-forward のみを受け付ける.
+	// head が expected_head から変更されていたら, 何も記録せずに ABORTED を返し, 詳細情報に HeadMoved を付与する.
 	// blob が存在しなければ, FAILED_PRECONDITION を返す.
 	CommitRevision(context.Context, *connect.Request[v1alpha1.CommitRevisionRequest]) (*connect.Response[v1alpha1.CommitRevisionResponse], error)
 }
@@ -162,6 +181,13 @@ func NewItemServiceHandler(svc ItemServiceHandler, opts ...connect.HandlerOption
 		connect.WithIdempotency(connect.IdempotencyNoSideEffects),
 		connect.WithHandlerOptions(opts...),
 	)
+	itemServiceListItemsHandler := connect.NewUnaryHandler(
+		ItemServiceListItemsProcedure,
+		svc.ListItems,
+		connect.WithSchema(itemServiceMethods.ByName("ListItems")),
+		connect.WithIdempotency(connect.IdempotencyNoSideEffects),
+		connect.WithHandlerOptions(opts...),
+	)
 	itemServiceGetRevisionHandler := connect.NewUnaryHandler(
 		ItemServiceGetRevisionProcedure,
 		svc.GetRevision,
@@ -181,6 +207,8 @@ func NewItemServiceHandler(svc ItemServiceHandler, opts ...connect.HandlerOption
 			itemServiceCreateItemHandler.ServeHTTP(w, r)
 		case ItemServiceGetItemProcedure:
 			itemServiceGetItemHandler.ServeHTTP(w, r)
+		case ItemServiceListItemsProcedure:
+			itemServiceListItemsHandler.ServeHTTP(w, r)
 		case ItemServiceGetRevisionProcedure:
 			itemServiceGetRevisionHandler.ServeHTTP(w, r)
 		case ItemServiceCommitRevisionProcedure:
@@ -200,6 +228,10 @@ func (UnimplementedItemServiceHandler) CreateItem(context.Context, *connect.Requ
 
 func (UnimplementedItemServiceHandler) GetItem(context.Context, *connect.Request[v1alpha1.GetItemRequest]) (*connect.Response[v1alpha1.GetItemResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("lyell.api.v1alpha1.ItemService.GetItem is not implemented"))
+}
+
+func (UnimplementedItemServiceHandler) ListItems(context.Context, *connect.Request[v1alpha1.ListItemsRequest]) (*connect.Response[v1alpha1.ListItemsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("lyell.api.v1alpha1.ItemService.ListItems is not implemented"))
 }
 
 func (UnimplementedItemServiceHandler) GetRevision(context.Context, *connect.Request[v1alpha1.GetRevisionRequest]) (*connect.Response[v1alpha1.GetRevisionResponse], error) {

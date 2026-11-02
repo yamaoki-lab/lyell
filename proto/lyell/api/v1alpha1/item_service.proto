@@ -6,11 +6,11 @@ import "lyell/api/v1alpha1/item.proto";
 
 option go_package = "github.com/yamaoki-lab/lyell/gen/lyell/api/v1alpha1;apiv1alpha1";
 
-// ItemService は, item と revision を作成し, 読み取る.
+// ItemService は, item と revision の作成および取得を行う.
 //
-// 中身のバイト列 (blob) は, この RPC とは別に, 通常の HTTP で /lyell/api/v1alpha1/blobs/sha256/<hex> に保存し, 読み取る. RPC は SHA-256 だけを受け渡す.
+// 中身のバイト列 (blob) は, この RPC とは別に, 通常の HTTP で /lyell/api/v1alpha1/blobs/sha256/<hex> に保存および取得する. RPC では SHA-256 のみを受け渡す.
 service ItemService {
-  // CreateItem は, item を, 保存済みの blob を指す最初の revision と一緒に作成する. 現在は asset だけを作成できる.
+  // CreateItem は, item を, 保存済みの blob を指す最初の revision と共に作成する. 現在は asset のみを作成できる.
   // blob が存在しなければ, FAILED_PRECONDITION を返す.
   rpc CreateItem(CreateItemRequest) returns (CreateItemResponse);
 
@@ -19,22 +19,27 @@ service ItemService {
     option idempotency_level = NO_SIDE_EFFECTS;
   }
 
-  // GetRevision は, revision を, 親の一覧と一緒に返す. 存在しなければ NOT_FOUND を返す.
+  // ListItems は, item を, head の revision と共にページ単位で返す. 絞り込み (filter, AIP-160), 並び順 (order_by, AIP-132), 続きの取得 (page_token, AIP-158) は Google の API 設計指針に従う.
+  rpc ListItems(ListItemsRequest) returns (ListItemsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+
+  // GetRevision は, revision を, 親の一覧と共に返す. 存在しなければ NOT_FOUND を返す.
   rpc GetRevision(GetRevisionRequest) returns (GetRevisionResponse) {
     option idempotency_level = NO_SIDE_EFFECTS;
   }
 
-  // CommitRevision は, item に revision を追加し, item の head をその revision へ進める. 早送りだけを受け付ける.
-  // head が expected_head から動いていたら, 何も記録せずに ABORTED を返し, 詳細に HeadMoved を付ける.
+  // CommitRevision は, item に revision を追加し, item の head をその revision へ進める. fast-forward のみを受け付ける.
+  // head が expected_head から変更されていたら, 何も記録せずに ABORTED を返し, 詳細情報に HeadMoved を付与する.
   // blob が存在しなければ, FAILED_PRECONDITION を返す.
   rpc CommitRevision(CommitRevisionRequest) returns (CommitRevisionResponse);
 }
 
 // CreateItemRequest は, CreateItem のリクエスト.
 message CreateItemRequest {
-  // kind は item の種類. 現在は ITEM_KIND_ASSET だけを受け付ける.
+  // kind は item の種類. 現在は ITEM_KIND_ASSET のみを受け付ける.
   ItemKind kind = 1;
-  // blob_sha256 は, 最初の revision の中身の SHA-256 (小文字の16進数64文字). 先に保存しておく.
+  // blob_sha256 は, 最初の revision の中身の SHA-256 (小文字の16進数64文字). 事前に保存しておく必要がある.
   string blob_sha256 = 2;
 }
 
@@ -48,25 +53,57 @@ message CreateItemResponse {
 
 // GetItemRequest は, GetItem のリクエスト.
 message GetItemRequest {
-  // id は, 読み取る item の ID.
+  // id は, 取得する item の ID.
   string id = 1;
 }
 
 // GetItemResponse は, GetItem のレスポンス.
 message GetItemResponse {
-  // item は, 読み取った item.
+  // item は, 取得した item.
   Item item = 1;
+}
+
+// ListItemsRequest は, ListItems のリクエスト.
+message ListItemsRequest {
+  // page_size は, 1ページあたりに返す最大件数. 0 の場合は 128 件. 1024 を超える値は 1024 として扱う. 負の値は INVALID_ARGUMENT になる.
+  int32 page_size = 1;
+  // page_token は, 前のレスポンスの next_page_token. 空なら先頭から返す. page_size 以外のフィールドは, そのトークンを受け取った時と同じ値を指定する. 異なる場合は INVALID_ARGUMENT になる.
+  string page_token = 2;
+  // filter は, 返す item の条件 (AIP-160). フィールド名は ItemEntry を起点に指定する. 空なら全ての item を返す.
+  // 現在受け付けるのは, item.kind の等値比較と, head_revision.content.create_time (最後に head を進めた時刻) の比較を, AND で結合した条件のみ. それ以外は INVALID_ARGUMENT になる.
+  // 例: `item.kind = ITEM_KIND_ASSET AND head_revision.content.create_time >= "2026-10-01T00:00:00Z"`
+  string filter = 3;
+  // order_by は, 並び順 (AIP-132). フィールド名は ItemEntry を起点に指定する. 空なら "item.id desc" (新しい順). 現在受け付けるのは "item.id" (古い順) と "item.id desc" のみで, それ以外は INVALID_ARGUMENT になる.
+  string order_by = 4;
+}
+
+// ListItemsResponse は, ListItems のレスポンス.
+message ListItemsResponse {
+  // entries は, このページの item 一覧. order_by で指定された順に並ぶ.
+  repeated ItemEntry entries = 1;
+  // next_page_token は, 次ページを取得する際に page_token に渡す値. 空なら最後のページ.
+  string next_page_token = 2;
+  // total_size は, filter に一致する item の総数 (全ページの合計).
+  int32 total_size = 3;
+}
+
+// ItemEntry は, ListItems が返す1件分のデータ. item と, その head の revision が必ず組で取得できるよう, 1つのメッセージにまとめている.
+message ItemEntry {
+  // item は, item.
+  Item item = 1;
+  // head_revision は, item の head の revision. 親の一覧を含む.
+  Revision head_revision = 2;
 }
 
 // GetRevisionRequest は, GetRevision のリクエスト.
 message GetRevisionRequest {
-  // id は, 読み取る revision の ID.
+  // id は, 取得する revision の ID.
   string id = 1;
 }
 
 // GetRevisionResponse は, GetRevision のレスポンス.
 message GetRevisionResponse {
-  // revision は, 読み取った revision.
+  // revision は, 取得した revision.
   Revision revision = 1;
 }
 
@@ -74,22 +111,22 @@ message GetRevisionResponse {
 message CommitRevisionRequest {
   // item_id は, revision を追加する item の ID.
   string item_id = 1;
-  // expected_head は, 呼び出し側が前提としている現在の head. 現在の head と異なれば ABORTED になる.
+  // expected_head は, 呼び出し元が想定している現在の head. 現在の head と異なれば ABORTED を返す.
   string expected_head = 2;
-  // parents は, 新しい revision の親. 空なら expected_head だけを親にする (最も一般的な早送り). 指定する場合は expected_head を必ず含める.
+  // parents は, 新しい revision の親. 空なら expected_head のみを親にする (最も一般的な fast-forward). 指定する場合は expected_head を必ず含める.
   repeated string parents = 3;
-  // blob_sha256 は, 新しい revision の中身の SHA-256 (小文字の16進数64文字). 先に保存しておく.
+  // blob_sha256 は, 新しい revision の中身の SHA-256 (小文字の16進数64文字). 事前に保存しておく必要がある.
   string blob_sha256 = 4;
 }
 
 // CommitRevisionResponse は, CommitRevision のレスポンス.
 message CommitRevisionResponse {
-  // revision は, 追加した revision. item の head は, この revision の ID に進んでいる.
+  // revision は, 追加した revision. item の head は, この revision の ID へ進められる.
   Revision revision = 1;
 }
 
-// HeadMoved は, CommitRevision が ABORTED を返す時に付ける詳細. 呼び出し側は, 読み直さずに現在の head を取得し, 統合の処理へ進める.
+// HeadMoved は, CommitRevision が ABORTED を返す時に付与する詳細情報. 呼び出し元は, 再取得せずに現在の head を取得し, 分岐の解決へ進めることができる.
 message HeadMoved {
-  // current_head は, 拒否した時点の item の head.
+  // current_head は, リクエストが拒否された時点の item の head.
   string current_head = 1;
 }

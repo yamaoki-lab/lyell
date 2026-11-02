@@ -23,6 +23,10 @@ CREATE INDEX items_head
   -- revision を削除する時の "どの item の head にもなっていないか" の検査で, テーブル全体を読まずに済むように.
   ON items (head);
 
+CREATE INDEX items_kind_id
+  -- item の一覧を kind で絞り込む際, テーブル全体をスキャンせず, 続きの位置から ID 順に取得するため.
+  ON items (kind, id);
+
 CREATE TABLE revisions (
   -- revision の記録.
   --
