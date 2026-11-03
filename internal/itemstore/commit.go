@@ -13,7 +13,7 @@ import (
 // ErrNotFastForward は, 前提とした head が現在の head と異なる時のエラー. 他の書き込みが先に head を進めたことを表す. 呼び出し側は, 現在の head を読み直し, 新しい revision の親をそれに合わせて作り直すか, 分岐として扱う.
 //
 // CommitRevision は *NotFastForwardError を返し, errors.Is(err, ErrNotFastForward) は真になる. 現在の head が必要な時は errors.As で取り出す.
-var ErrNotFastForward = errors.New("itemstore: 早送りでない")
+var ErrNotFastForward = errors.New("itemstore: 早送り (fast-forward) ではありません")
 
 // NotFastForwardError は, CommitRevision が早送りでないために拒否した時のエラー. 拒否した時点の head を持つので, 呼び出し側は読み直さずに統合の処理へ進める.
 type NotFastForwardError struct {
@@ -23,7 +23,7 @@ type NotFastForwardError struct {
 }
 
 func (e *NotFastForwardError) Error() string {
-	return fmt.Sprintf("item %s の head が %s ではなく %s: %v", e.ItemID, e.From, e.Head, ErrNotFastForward)
+	return fmt.Sprintf("item %s の head が %s ではなく %s です: %v", e.ItemID, e.From, e.Head, ErrNotFastForward)
 }
 
 // Is は, errors.Is(err, ErrNotFastForward) を真にする. ErrNotFastForward で判別する既存の呼び出し側との互換性を保つため.
@@ -93,7 +93,7 @@ func (s *Store) CommitRevision(ctx context.Context, r NewRevision) (ID, error) {
 			return ID{}, fmt.Errorf("親 revision %s: %w", p, ErrNotFound)
 		}
 		if _, err := tx.ExecContext(ctx, "INSERT INTO revision_parents (revision_id, parent_id) VALUES (?, ?)", revID[:], p[:]); err != nil {
-			return ID{}, fmt.Errorf("親 %s を記録できない: %w", p, err)
+			return ID{}, fmt.Errorf("親 %s を記録できませんでした: %w", p, err)
 		}
 	}
 
@@ -140,12 +140,12 @@ func validateParents(from ID, parents []ID) error {
 	seen := make(map[ID]bool, len(parents))
 	for _, p := range parents {
 		if seen[p] {
-			return fmt.Errorf("%w: 親 %s が重複している", ErrInvalid, p)
+			return fmt.Errorf("%w: 親 %s が重複しています", ErrInvalid, p)
 		}
 		seen[p] = true
 	}
 	if !seen[from] {
-		return fmt.Errorf("%w: 親に前提の head %s が含まれていない. 早送りにならない", ErrInvalid, from)
+		return fmt.Errorf("%w: 親に前提の head %s が含まれていません. 早送り (fast-forward) になりません", ErrInvalid, from)
 	}
 	return nil
 }
