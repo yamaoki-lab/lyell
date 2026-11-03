@@ -244,6 +244,28 @@ func TestCommitRevision_ErrorCodes(t *testing.T) {
 	}
 }
 
+func TestLimitsMessageSize(t *testing.T) {
+	_, hs := startTestServer(t)
+	// gzip で送るため, 展開後のサイズが上限を超えていても, 送信するバイト数は少ない.
+	c := apiv1alpha1connect.NewItemServiceClient(hs.Client(), hs.URL, connect.WithSendGzip())
+
+	tests := []struct {
+		name string
+		size int
+		want connect.Code
+	}{
+		{name: "上限を超える", size: maxMessageBytes + 1, want: connect.CodeResourceExhausted},
+		// 上限未満なら, バリデーションまで到達する.
+		{name: "上限未満", size: maxMessageBytes / 2, want: connect.CodeInvalidArgument},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := c.GetItem(context.Background(), connect.NewRequest(&apiv1alpha1.GetItemRequest{Id: strings.Repeat("a", tt.size)}))
+			wantCode(t, "GetItem()", err, tt.want)
+		})
+	}
+}
+
 func TestInternalErrorHidesDetails(t *testing.T) {
 	s, c := newTestServer(t)
 	created := createItem(t, s, c, "hello")

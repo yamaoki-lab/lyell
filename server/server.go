@@ -17,6 +17,8 @@ import (
 	"log/slog"
 	"net/http"
 
+	"connectrpc.com/connect"
+
 	"github.com/yamaoki-lab/lyell/gen/lyell/api/v1alpha1/apiv1alpha1connect"
 	"github.com/yamaoki-lab/lyell/internal/blobstore"
 	"github.com/yamaoki-lab/lyell/internal/itemstore"
@@ -56,9 +58,13 @@ func Open(ctx context.Context, cfg Config) (*Server, error) {
 	return &Server{items: items, blobs: blobs, log: log}, nil
 }
 
+// maxMessageBytes は, ItemService が受け付けるメッセージの展開後のサイズの上限. 現在のメッセージは ID と SHA-256 のみで数百バイト程度なので, 十分な余裕がある. blob のバイト列は blob の HTTP エンドポイントを経由するため, この上限は適用されない.
+const maxMessageBytes = 1 << 20
+
 // Register は, API のパスを mux に登録する.
 func (s *Server) Register(mux *http.ServeMux) {
-	mux.Handle(apiv1alpha1connect.NewItemServiceHandler(&itemService{items: s.items, log: s.log}))
+	// connect-go はデフォルトではメッセージのサイズを制限せず, gzip も受け付ける. 上限が無いと, 小さな gzip のリクエストであっても, バリデーションの前に極めて大きなメッセージが展開されてしまう.
+	mux.Handle(apiv1alpha1connect.NewItemServiceHandler(&itemService{items: s.items, log: s.log}, connect.WithReadMaxBytes(maxMessageBytes)))
 	b := &blobHandler{blobs: s.blobs, log: s.log}
 	// GET のパターンは HEAD にも一致する. 他のメソッドには, mux が 405 を返す.
 	mux.HandleFunc("GET "+blobPath, b.get)
