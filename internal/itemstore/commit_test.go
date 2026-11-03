@@ -155,6 +155,15 @@ func TestCommitRevision_RejectsBadInput(t *testing.T) {
 		t.Fatalf("CreateItem() error = %v, want nil", err)
 	}
 	other := ID(testID(99))
+	// 上限を超える parents は全て実在する revision を指定し, 件数のみで拒否されることを確認する.
+	tooMany := []ID{item.Head}
+	for len(tooMany) <= maxParents {
+		another, err := s.CreateItem(ctx, newTestItem("another"))
+		if err != nil {
+			t.Fatalf("CreateItem() error = %v, want nil", err)
+		}
+		tooMany = append(tooMany, another.Head)
+	}
 
 	tests := []struct {
 		name    string
@@ -165,6 +174,7 @@ func TestCommitRevision_RejectsBadInput(t *testing.T) {
 	}{
 		{name: "親を指定したが前提の head が含まれていない", itemID: item.ID, from: item.Head, parents: []ID{other}, want: ErrInvalid},
 		{name: "親が重複している", itemID: item.ID, from: item.Head, parents: []ID{item.Head, item.Head}, want: ErrInvalid},
+		{name: "parents の数が上限を超える", itemID: item.ID, from: item.Head, parents: tooMany, want: ErrInvalid},
 		{name: "存在しない revision を親にする", itemID: item.ID, from: item.Head, parents: []ID{item.Head, other}, want: ErrNotFound},
 		{name: "存在しない item", itemID: other, from: item.Head, parents: []ID{item.Head}, want: ErrNotFound},
 	}

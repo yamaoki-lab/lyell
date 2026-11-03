@@ -146,7 +146,7 @@ type Revision struct {
 	Id string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	// item_id は, この revision が属する item の ID.
 	ItemId string `protobuf:"bytes,2,opt,name=item_id,json=itemId,proto3" json:"item_id,omitempty"`
-	// parents は, 1つ前の revision の ID. 最初の revision には無い. item の統合では, 別の item の revision も親になる.
+	// parents は, 1つ前の revision の ID. 最初の revision には存在しない. item の統合では, 別の item の revision も親になる. 現在は最大2つだが, 上限は今後引き上げる可能性があるため, 読み取る側は parents の数が2つ以下であることを前提としない.
 	Parents []string `protobuf:"bytes,3,rep,name=parents,proto3" json:"parents,omitempty"`
 	// content は中身. 間引かれていれば存在しないが, 親は辿れる.
 	Content       *RevisionContent `protobuf:"bytes,4,opt,name=content,proto3" json:"content,omitempty"`

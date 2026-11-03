@@ -129,7 +129,14 @@ func (s *Store) CommitRevision(ctx context.Context, r NewRevision) (ID, error) {
 	return revID, nil
 }
 
+// maxParents は, 1つの revision が持てる parents の数の上限. fast-forward の parents は1つ, 統合の parents は2つで, 3つ以上を一度に統合する操作は存在しない. 上限が無いと, 1回の CommitRevision で大量の parents を記録でき, その間は唯一の書き込み接続を占有し続ける.
+const maxParents = 2
+
 func validateParents(from ID, parents []ID) error {
+	// 親ごとに DB を参照する前に, 件数のみで拒否する.
+	if len(parents) > maxParents {
+		return fmt.Errorf("%w: parents が %d 個指定されています (%d 個以下である必要があります)", ErrInvalid, len(parents), maxParents)
+	}
 	seen := make(map[ID]bool, len(parents))
 	for _, p := range parents {
 		if seen[p] {
