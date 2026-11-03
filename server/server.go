@@ -1,6 +1,6 @@
 // Package server は, Lyell の API (lyell.api.v1alpha1) を http.Handler として提供する.
 //
-// Lyell は単独のサーバではなく, 製品のバックエンドに組み込む部品である. 待ち受け (http.Server, TLS) は組み込む側が持ち, Lyell は Register で ServeMux に API のパスを登録することのみを担う. 登録するパスは全て /lyell で始まるので, 製品自身のパスとは重ならない.
+// Lyell は単独のサーバではなく, 製品のバックエンドに組み込む部品である. HTTP サーバの管理 (http.Server, TLS) は組み込む側が行い, Lyell は Register で ServeMux に API のパスを登録することのみを担う. 登録するパスは全て /lyell で始まるため, 製品自身のパスとは重複しない.
 //
 //	srv, err := server.Open(ctx, server.Config{DBPath: "lyell.db", BlobDir: "blobs"})
 //	if err != nil {
@@ -30,7 +30,7 @@ type Config struct {
 	DBPath string
 	// BlobDir は, blob を保存するディレクトリ.
 	BlobDir string
-	// Logger は, 後から調べられるよう重要な出来事 (schema version を上げた, 内部エラー等) を出力する先. nil なら出力しない.
+	// Logger は, 後から調べられるよう重要なイベント (schema version を上げた, 内部エラー等) を出力する先. nil なら出力しない.
 	Logger *slog.Logger
 }
 

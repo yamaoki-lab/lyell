@@ -20,14 +20,14 @@ import (
 	"github.com/yamaoki-lab/lyell/internal/blobstore"
 )
 
-// newTestServer は, startTestServer で待ち受け, ItemService のクライアントを返す.
+// newTestServer は, startTestServer でテスト用サーバを起動し, ItemService のクライアントを返す.
 func newTestServer(t *testing.T) (*Server, apiv1alpha1connect.ItemServiceClient) {
 	t.Helper()
 	s, hs := startTestServer(t)
 	return s, apiv1alpha1connect.NewItemServiceClient(hs.Client(), hs.URL)
 }
 
-// startTestServer は, 一時ディレクトリに DB と blob の保存先を作成し, Register した mux を httptest のサーバで待ち受ける.
+// startTestServer は, 一時ディレクトリに DB と blob の保存先を作成し, Register した mux で httptest のサーバを起動する.
 func startTestServer(t *testing.T) (*Server, *httptest.Server) {
 	t.Helper()
 	dir := t.TempDir()
@@ -35,7 +35,7 @@ func startTestServer(t *testing.T) (*Server, *httptest.Server) {
 	if err != nil {
 		t.Fatalf("Open() error = %v, want nil", err)
 	}
-	// Cleanup は登録と逆の順に実行されるので, 待ち受けを止めてから DB を閉じる.
+	// Cleanup は登録と逆の順に実行されるので, サーバを停止してから DB を閉じる.
 	t.Cleanup(func() { _ = s.Close() })
 	mux := http.NewServeMux()
 	s.Register(mux)
@@ -44,12 +44,12 @@ func startTestServer(t *testing.T) (*Server, *httptest.Server) {
 	return s, hs
 }
 
-// putBlob は, data を blob として保存し, その SHA-256 を API の表記で返す. blob の HTTP を経ずに, blobstore へ直接保存する.
+// putBlob は, data を blob として保存し, その SHA-256 を API の表記で返す. blob の HTTP エンドポイントを経由せずに, blobstore へ直接保存する.
 func putBlob(t *testing.T, s *Server, data string) string {
 	t.Helper()
 	sum := blobstore.Sum(sha256.Sum256([]byte(data)))
 	if _, err := s.blobs.Put(context.Background(), sum, strings.NewReader(data)); err != nil {
-		t.Fatalf("blob を保存できない: %v", err)
+		t.Fatalf("blob を保存できません: %v", err)
 	}
 	return sum.String()
 }
