@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"runtime"
+	"time"
 
 	"github.com/yamaoki-lab/lyell/internal/blobstore"
 )
@@ -34,6 +35,9 @@ type Config struct {
 
 // minSQLiteVersion は, 使う機能が揃う SQLite のバージョン. STRICT が 3.37.0 から, VACUUM INTO が 3.27.0 から.
 var minSQLiteVersion = [3]int{3, 37, 0}
+
+// readConnMaxIdleTime は, 読み取り用の接続をアイドル状態で保持する時間の上限. 接続はそれぞれページキャッシュ (デフォルトで最大約 2 MB) を持つため, 読み取りが停止した後は閉じて解放する. 接続を新たに開くコストは1回あたり約 0.09 ms なので, 短い時間でよい.
+const readConnMaxIdleTime = 10 * time.Second
 
 // Open は, DB を開く. schema version が古ければ, 最新の schema version まで上げる.
 func Open(ctx context.Context, cfg Config) (*Store, error) {
@@ -83,7 +87,11 @@ func open(ctx context.Context, cfg Config, ms []migration) (*Store, error) {
 		_ = write.Close()
 		return nil, err
 	}
-	read.SetMaxOpenConns(runtime.GOMAXPROCS(0))
+	// database/sql は, デフォルトではアイドル状態の接続を2つまでしか保持しない. 3つ以上を並列に読み取ると, 返却された接続が閉じられ, 次の読み取りで新たに開かれるため, 上限まで保持する.
+	readConns := runtime.GOMAXPROCS(0)
+	read.SetMaxOpenConns(readConns)
+	read.SetMaxIdleConns(readConns)
+	read.SetConnMaxIdleTime(readConnMaxIdleTime)
 	if err := read.PingContext(ctx); err != nil {
 		_ = read.Close()
 		_ = write.Close()
