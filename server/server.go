@@ -1,6 +1,6 @@
 // Package server は, Lyell の API (lyell.api.v1alpha1) を http.Handler として提供する.
 //
-// Lyell は単独のサーバではなく, 製品のバックエンドに組み込む部品である. 待ち受け (http.Server, TLS) は組み込む側が持ち, Lyell は Register で ServeMux に API のパスを登録することのみを担う. 登録するパスは全て /lyell で始まるので, 製品自身のパスとは重ならない.
+// Lyell は単独のサーバではなく, 製品のバックエンドに組み込む部品である. HTTP サーバの管理 (http.Server, TLS) は組み込む側が行い, Lyell は Register で ServeMux に API のパスを登録することのみを担う. 登録するパスは全て /lyell で始まるため, 製品自身のパスとは重複しない.
 //
 //	srv, err := server.Open(ctx, server.Config{DBPath: "lyell.db", BlobDir: "blobs"})
 //	if err != nil {
@@ -17,6 +17,8 @@ import (
 	"log/slog"
 	"net/http"
 
+	"connectrpc.com/connect"
+
 	"github.com/yamaoki-lab/lyell/gen/lyell/api/v1alpha1/apiv1alpha1connect"
 	"github.com/yamaoki-lab/lyell/internal/blobstore"
 	"github.com/yamaoki-lab/lyell/internal/itemstore"
@@ -28,7 +30,7 @@ type Config struct {
 	DBPath string
 	// BlobDir は, blob を保存するディレクトリ.
 	BlobDir string
-	// Logger は, 後から調べられるよう重要な出来事 (schema version を上げた, 内部エラー等) を出力する先. nil なら出力しない.
+	// Logger は, 後から調べられるよう重要なイベント (schema version を上げた, 内部エラー等) を出力する先. nil なら出力しない.
 	Logger *slog.Logger
 }
 
@@ -56,9 +58,13 @@ func Open(ctx context.Context, cfg Config) (*Server, error) {
 	return &Server{items: items, blobs: blobs, log: log}, nil
 }
 
+// maxMessageBytes は, ItemService が受け付けるメッセージの展開後のサイズの上限. 現在のメッセージは ID と SHA-256 のみで数百バイト程度なので, 十分な余裕がある. blob のバイト列は blob の HTTP エンドポイントを経由するため, この上限は適用されない.
+const maxMessageBytes = 1 << 20
+
 // Register は, API のパスを mux に登録する.
 func (s *Server) Register(mux *http.ServeMux) {
-	mux.Handle(apiv1alpha1connect.NewItemServiceHandler(&itemService{items: s.items, log: s.log}))
+	// connect-go はデフォルトではメッセージのサイズを制限せず, gzip も受け付ける. 上限が無いと, 小さな gzip のリクエストであっても, バリデーションの前に極めて大きなメッセージが展開されてしまう.
+	mux.Handle(apiv1alpha1connect.NewItemServiceHandler(&itemService{items: s.items, log: s.log}, connect.WithReadMaxBytes(maxMessageBytes)))
 	b := &blobHandler{blobs: s.blobs, log: s.log}
 	// GET のパターンは HEAD にも一致する. 他のメソッドには, mux が 405 を返す.
 	mux.HandleFunc("GET "+blobPath, b.get)
