@@ -516,7 +516,7 @@ type CommitRevisionRequest struct {
 	ItemId string `protobuf:"bytes,1,opt,name=item_id,json=itemId,proto3" json:"item_id,omitempty"`
 	// expected_head は, 呼び出し元が想定している現在の head. 現在の head と異なれば ABORTED を返す.
 	ExpectedHead string `protobuf:"bytes,2,opt,name=expected_head,json=expectedHead,proto3" json:"expected_head,omitempty"`
-	// parents は, 新しい revision の親. 空なら expected_head のみを親にする (最も一般的な fast-forward). 指定する場合は expected_head を必ず含める.
+	// parents は, 新しい revision の親となる revision の ID. 空なら expected_head のみを親にする (最も一般的な fast-forward). 指定する場合は expected_head を必ず含める. 現在の上限は2つで, 超えると INVALID_ARGUMENT を返す. 上限は今後引き上げる可能性がある.
 	Parents []string `protobuf:"bytes,3,rep,name=parents,proto3" json:"parents,omitempty"`
 	// blob_sha256 は, 新しい revision の中身の SHA-256 (小文字の16進数64文字). 事前に保存しておく必要がある.
 	BlobSha256    string `protobuf:"bytes,4,opt,name=blob_sha256,json=blobSha256,proto3" json:"blob_sha256,omitempty"`
