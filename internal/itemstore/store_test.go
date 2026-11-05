@@ -112,6 +112,35 @@ func TestOpen_EveryReadConnectionHasPragmas(t *testing.T) {
 	}
 }
 
+func TestOpen_ReadPoolKeepsIdleConns(t *testing.T) {
+	s, _ := openTestStore(t)
+	ctx := context.Background()
+
+	// database/sql は, デフォルトではアイドル状態の接続を2つまでしか保持しない. それを超える数の接続を同時に使用しなければ, 挙動の差を検証できない.
+	n := s.read.Stats().MaxOpenConnections
+	if n <= 2 {
+		t.Skipf("読み取り用の接続の上限が %d のため, 検証できない", n)
+	}
+	conns := make([]*sql.Conn, n)
+	for i := range conns {
+		conn, err := s.read.Conn(ctx)
+		if err != nil {
+			t.Fatalf("Conn() (%d本目) error = %v, want nil", i+1, err)
+		}
+		conns[i] = conn
+	}
+	for _, conn := range conns {
+		_ = conn.Close()
+	}
+	st := s.read.Stats()
+	if st.Idle != n {
+		t.Errorf("アイドル状態の読み取り用の接続の数 = %d, want %d", st.Idle, n)
+	}
+	if st.MaxIdleClosed != 0 {
+		t.Errorf("アイドル状態の上限を超えて閉じられた接続の数 = %d, want 0", st.MaxIdleClosed)
+	}
+}
+
 func TestOpen_ReadConnectionRejectsWrites(t *testing.T) {
 	s, _ := openTestStore(t)
 	if _, err := s.read.Exec("PRAGMA user_version = 99"); err == nil { // yamaoki-lint:ignore
