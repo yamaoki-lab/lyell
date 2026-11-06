@@ -134,7 +134,7 @@ func invalidArgument(field string, err error) error {
 	return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("%s: %w", field, err))
 }
 
-// parseID は, ハイフン区切りの36文字の ID を読み取る. uuid.Parse は波括弧や urn:uuid: 付きの表記も受け付けるが, API の表記を1つに保つため, 36文字以外は拒否する.
+// parseID は, ハイフン区切りの36文字 (小文字) の ID を読み取る. uuid.Parse は波括弧や urn:uuid: 付きの表記, 大文字の16進数も受け付けるが, API の表記を統一するため, 応答で返す表記 (ID.String) と一致しないものは拒否する.
 func parseID(s string) (itemstore.ID, error) {
 	if len(s) != 36 {
 		return itemstore.ID{}, fmt.Errorf("ID はハイフン区切りの36文字だが, %d文字だった", len(s))
@@ -142,6 +142,9 @@ func parseID(s string) (itemstore.ID, error) {
 	u, err := uuid.Parse(s)
 	if err != nil {
 		return itemstore.ID{}, err
+	}
+	if u.String() != s {
+		return itemstore.ID{}, errors.New("ID は小文字で表記する")
 	}
 	return itemstore.ID(u), nil
 }
