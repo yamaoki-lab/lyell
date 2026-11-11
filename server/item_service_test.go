@@ -149,6 +149,8 @@ func TestGet_RejectsUnknownAndMalformedID(t *testing.T) {
 		// uuid.Parse は受け付けるが, API の表記ではない.
 		{name: "波括弧付き", id: "{" + unknown.String() + "}", want: connect.CodeInvalidArgument},
 		{name: "ハイフン無し", id: strings.ReplaceAll(unknown.String(), "-", ""), want: connect.CodeInvalidArgument},
+		// 36文字だが, 応答で返す表記 (小文字) と異なる.
+		{name: "大文字", id: "0190A0B0-C0D0-7000-8000-000000000001", want: connect.CodeInvalidArgument},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

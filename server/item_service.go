@@ -134,14 +134,17 @@ func invalidArgument(field string, err error) error {
 	return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("%s: %w", field, err))
 }
 
-// parseID は, ハイフン区切りの36文字の ID を読み取る. uuid.Parse は波括弧や urn:uuid: 付きの表記も受け付けるが, API の表記を1つに保つため, 36文字以外は拒否する.
+// parseID は, ハイフン区切りの36文字 (小文字) の ID を読み取る. uuid.Parse は波括弧や urn:uuid: 付きの表記, 大文字の16進数も受け付けるが, API の表記を統一するため, 応答で返す表記 (ID.String) と一致しないものは拒否する.
 func parseID(s string) (itemstore.ID, error) {
 	if len(s) != 36 {
-		return itemstore.ID{}, fmt.Errorf("ID はハイフン区切りの36文字だが, %d文字だった", len(s))
+		return itemstore.ID{}, fmt.Errorf("ID はハイフン区切りの36文字ですが, %d文字でした", len(s))
 	}
 	u, err := uuid.Parse(s)
 	if err != nil {
 		return itemstore.ID{}, err
+	}
+	if u.String() != s {
+		return itemstore.ID{}, errors.New("ID は小文字で表記してください")
 	}
 	return itemstore.ID(u), nil
 }
@@ -153,7 +156,7 @@ func parseSum(s string) (blobstore.Sum, error) {
 		return blobstore.Sum{}, err
 	}
 	if sum.String() != s {
-		return blobstore.Sum{}, errors.New("SHA-256 は小文字の16進数で表記する")
+		return blobstore.Sum{}, errors.New("SHA-256 は小文字の16進数で表記してください")
 	}
 	return sum, nil
 }
@@ -164,9 +167,9 @@ func parseKind(k apiv1alpha1.ItemKind) (itemstore.Kind, error) {
 	case apiv1alpha1.ItemKind_ITEM_KIND_ASSET:
 		return itemstore.KindAsset, nil
 	case apiv1alpha1.ItemKind_ITEM_KIND_COLLECTION:
-		return "", errors.New("collection は, 一覧の形式が決まるまで作成できない")
+		return "", errors.New("collection は, 一覧の形式が決まるまで作成できません")
 	}
-	return "", fmt.Errorf("item の種類 %v は受け付けない", k)
+	return "", fmt.Errorf("item の種類 %v は受け付けられません", k)
 }
 
 func itemToProto(item itemstore.Item) *apiv1alpha1.Item {
