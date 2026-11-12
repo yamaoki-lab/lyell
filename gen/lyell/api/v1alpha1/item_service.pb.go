@@ -9,6 +9,7 @@ package apiv1alpha1
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	fieldmaskpb "google.golang.org/protobuf/types/known/fieldmaskpb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
@@ -21,13 +22,120 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// FieldViolationReason は, ItemService が INVALID_ARGUMENT を返す時の拒否の理由.
+// INVALID_ARGUMENT には詳細情報として google.rpc.BadRequest (AIP-193) を付与する. field_violations の field はリクエスト内のフィールドのパス (例: content.blob_sha256, parents[1]. 添字は0から数える), reason は値の名前から接頭辞 FIELD_VIOLATION_REASON_ を除いたもの (例: ID_MALFORMED), description は日本語の説明.
+// クライアントは reason で理由を判別し, 独自のメッセージを表示できる. filter と order_by の拒否には, まだ reason を設定しない.
+type FieldViolationReason int32
+
+const (
+	// FIELD_VIOLATION_REASON_UNSPECIFIED は使用しない.
+	FieldViolationReason_FIELD_VIOLATION_REASON_UNSPECIFIED FieldViolationReason = 0
+	// FIELD_VIOLATION_REASON_ID_MALFORMED は, ID が応答で返す表記 (小文字でハイフン区切りの36文字) ではないこと. 空の場合も含む.
+	FieldViolationReason_FIELD_VIOLATION_REASON_ID_MALFORMED FieldViolationReason = 1
+	// FIELD_VIOLATION_REASON_BLOB_SHA256_MALFORMED は, SHA-256 が小文字の16進数64文字ではないこと.
+	FieldViolationReason_FIELD_VIOLATION_REASON_BLOB_SHA256_MALFORMED FieldViolationReason = 2
+	// FIELD_VIOLATION_REASON_KIND_UNSPECIFIED は, item の種類が指定されていないこと.
+	FieldViolationReason_FIELD_VIOLATION_REASON_KIND_UNSPECIFIED FieldViolationReason = 3
+	// FIELD_VIOLATION_REASON_KIND_UNKNOWN は, item の種類が ItemKind に存在しない値であること.
+	FieldViolationReason_FIELD_VIOLATION_REASON_KIND_UNKNOWN FieldViolationReason = 4
+	// FIELD_VIOLATION_REASON_KIND_UNSUPPORTED は, item の種類は ItemKind に存在するが, まだ作成できないこと (ITEM_KIND_COLLECTION).
+	FieldViolationReason_FIELD_VIOLATION_REASON_KIND_UNSUPPORTED FieldViolationReason = 5
+	// FIELD_VIOLATION_REASON_PARENTS_TOO_MANY は, parents の数が上限を超えていること.
+	FieldViolationReason_FIELD_VIOLATION_REASON_PARENTS_TOO_MANY FieldViolationReason = 6
+	// FIELD_VIOLATION_REASON_PARENTS_DUPLICATE は, 同じ親が2回以上指定されていること. field は2つ目の親を指す.
+	FieldViolationReason_FIELD_VIOLATION_REASON_PARENTS_DUPLICATE FieldViolationReason = 7
+	// FIELD_VIOLATION_REASON_PARENTS_MISSING_EXPECTED_HEAD は, parents に expected_head が含まれていないこと.
+	FieldViolationReason_FIELD_VIOLATION_REASON_PARENTS_MISSING_EXPECTED_HEAD FieldViolationReason = 8
+	// FIELD_VIOLATION_REASON_PAGE_SIZE_NEGATIVE は, page_size が負の値であること.
+	FieldViolationReason_FIELD_VIOLATION_REASON_PAGE_SIZE_NEGATIVE FieldViolationReason = 9
+	// FIELD_VIOLATION_REASON_PAGE_TOKEN_MALFORMED は, page_token が, ListItems の返した next_page_token の形式ではないこと.
+	FieldViolationReason_FIELD_VIOLATION_REASON_PAGE_TOKEN_MALFORMED FieldViolationReason = 10
+	// FIELD_VIOLATION_REASON_PAGE_TOKEN_MISMATCH は, page_token を next_page_token として返したリクエストと, filter または order_by が異なること.
+	FieldViolationReason_FIELD_VIOLATION_REASON_PAGE_TOKEN_MISMATCH FieldViolationReason = 11
+	// FIELD_VIOLATION_REASON_BLOB_SHA256_REQUIRED は, 必須の blob_sha256 が空であること. CommitRevision では, update_mask に blob_sha256 を指定して値を空にした場合.
+	FieldViolationReason_FIELD_VIOLATION_REASON_BLOB_SHA256_REQUIRED FieldViolationReason = 12
+	// FIELD_VIOLATION_REASON_UPDATE_MASK_WILDCARD は, update_mask にワイルドカード "*" が指定されていること. field は update_mask.paths[i].
+	FieldViolationReason_FIELD_VIOLATION_REASON_UPDATE_MASK_WILDCARD FieldViolationReason = 13
+	// FIELD_VIOLATION_REASON_UPDATE_MASK_FIELD_UNKNOWN は, update_mask のパスが content に存在しないフィールドを指していること. field は update_mask.paths[i].
+	FieldViolationReason_FIELD_VIOLATION_REASON_UPDATE_MASK_FIELD_UNKNOWN FieldViolationReason = 14
+	// FIELD_VIOLATION_REASON_REVISION_UNCHANGED は, 親が1つの revision の content が, 出力専用のフィールドを除いて expected_head の revision と同じであること. field は content. 親が2つ (統合) なら, 同じでも受け付ける.
+	FieldViolationReason_FIELD_VIOLATION_REASON_REVISION_UNCHANGED FieldViolationReason = 15
+)
+
+// Enum value maps for FieldViolationReason.
+var (
+	FieldViolationReason_name = map[int32]string{
+		0:  "FIELD_VIOLATION_REASON_UNSPECIFIED",
+		1:  "FIELD_VIOLATION_REASON_ID_MALFORMED",
+		2:  "FIELD_VIOLATION_REASON_BLOB_SHA256_MALFORMED",
+		3:  "FIELD_VIOLATION_REASON_KIND_UNSPECIFIED",
+		4:  "FIELD_VIOLATION_REASON_KIND_UNKNOWN",
+		5:  "FIELD_VIOLATION_REASON_KIND_UNSUPPORTED",
+		6:  "FIELD_VIOLATION_REASON_PARENTS_TOO_MANY",
+		7:  "FIELD_VIOLATION_REASON_PARENTS_DUPLICATE",
+		8:  "FIELD_VIOLATION_REASON_PARENTS_MISSING_EXPECTED_HEAD",
+		9:  "FIELD_VIOLATION_REASON_PAGE_SIZE_NEGATIVE",
+		10: "FIELD_VIOLATION_REASON_PAGE_TOKEN_MALFORMED",
+		11: "FIELD_VIOLATION_REASON_PAGE_TOKEN_MISMATCH",
+		12: "FIELD_VIOLATION_REASON_BLOB_SHA256_REQUIRED",
+		13: "FIELD_VIOLATION_REASON_UPDATE_MASK_WILDCARD",
+		14: "FIELD_VIOLATION_REASON_UPDATE_MASK_FIELD_UNKNOWN",
+		15: "FIELD_VIOLATION_REASON_REVISION_UNCHANGED",
+	}
+	FieldViolationReason_value = map[string]int32{
+		"FIELD_VIOLATION_REASON_UNSPECIFIED":                   0,
+		"FIELD_VIOLATION_REASON_ID_MALFORMED":                  1,
+		"FIELD_VIOLATION_REASON_BLOB_SHA256_MALFORMED":         2,
+		"FIELD_VIOLATION_REASON_KIND_UNSPECIFIED":              3,
+		"FIELD_VIOLATION_REASON_KIND_UNKNOWN":                  4,
+		"FIELD_VIOLATION_REASON_KIND_UNSUPPORTED":              5,
+		"FIELD_VIOLATION_REASON_PARENTS_TOO_MANY":              6,
+		"FIELD_VIOLATION_REASON_PARENTS_DUPLICATE":             7,
+		"FIELD_VIOLATION_REASON_PARENTS_MISSING_EXPECTED_HEAD": 8,
+		"FIELD_VIOLATION_REASON_PAGE_SIZE_NEGATIVE":            9,
+		"FIELD_VIOLATION_REASON_PAGE_TOKEN_MALFORMED":          10,
+		"FIELD_VIOLATION_REASON_PAGE_TOKEN_MISMATCH":           11,
+		"FIELD_VIOLATION_REASON_BLOB_SHA256_REQUIRED":          12,
+		"FIELD_VIOLATION_REASON_UPDATE_MASK_WILDCARD":          13,
+		"FIELD_VIOLATION_REASON_UPDATE_MASK_FIELD_UNKNOWN":     14,
+		"FIELD_VIOLATION_REASON_REVISION_UNCHANGED":            15,
+	}
+)
+
+func (x FieldViolationReason) Enum() *FieldViolationReason {
+	p := new(FieldViolationReason)
+	*p = x
+	return p
+}
+
+func (x FieldViolationReason) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (FieldViolationReason) Descriptor() protoreflect.EnumDescriptor {
+	return file_lyell_api_v1alpha1_item_service_proto_enumTypes[0].Descriptor()
+}
+
+func (FieldViolationReason) Type() protoreflect.EnumType {
+	return &file_lyell_api_v1alpha1_item_service_proto_enumTypes[0]
+}
+
+func (x FieldViolationReason) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use FieldViolationReason.Descriptor instead.
+func (FieldViolationReason) EnumDescriptor() ([]byte, []int) {
+	return file_lyell_api_v1alpha1_item_service_proto_rawDescGZIP(), []int{0}
+}
+
 // CreateItemRequest は, CreateItem のリクエスト.
 type CreateItemRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// kind は item の種類. 現在は ITEM_KIND_ASSET のみを受け付ける.
 	Kind ItemKind `protobuf:"varint,1,opt,name=kind,proto3,enum=lyell.api.v1alpha1.ItemKind" json:"kind,omitempty"`
-	// blob_sha256 は, 最初の revision の中身の SHA-256 (小文字の16進数64文字). 事前に保存しておく必要がある.
-	BlobSha256    string `protobuf:"bytes,2,opt,name=blob_sha256,json=blobSha256,proto3" json:"blob_sha256,omitempty"`
+	// content は, 最初の revision の中身. blob_sha256 は必須で, blob を事前に保存しておく必要がある. blob_sha256 以外のフィールドは出力専用で, 設定しても無視する.
+	Content       *RevisionContent `protobuf:"bytes,3,opt,name=content,proto3" json:"content,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -69,11 +177,11 @@ func (x *CreateItemRequest) GetKind() ItemKind {
 	return ItemKind_ITEM_KIND_UNSPECIFIED
 }
 
-func (x *CreateItemRequest) GetBlobSha256() string {
+func (x *CreateItemRequest) GetContent() *RevisionContent {
 	if x != nil {
-		return x.BlobSha256
+		return x.Content
 	}
-	return ""
+	return nil
 }
 
 // CreateItemResponse は, CreateItem のレスポンス.
@@ -518,8 +626,11 @@ type CommitRevisionRequest struct {
 	ExpectedHead string `protobuf:"bytes,2,opt,name=expected_head,json=expectedHead,proto3" json:"expected_head,omitempty"`
 	// parents は, 新しい revision の親となる revision の ID. 空なら expected_head のみを親にする (最も一般的な fast-forward). 指定する場合は expected_head を必ず含める. 現在の上限は2つで, 超えると INVALID_ARGUMENT を返す. 上限は今後引き上げる可能性がある.
 	Parents []string `protobuf:"bytes,3,rep,name=parents,proto3" json:"parents,omitempty"`
-	// blob_sha256 は, 新しい revision の中身の SHA-256 (小文字の16進数64文字). 事前に保存しておく必要がある.
-	BlobSha256    string `protobuf:"bytes,4,opt,name=blob_sha256,json=blobSha256,proto3" json:"blob_sha256,omitempty"`
+	// content は, 新しい revision の中身. update_mask で変更の対象にしなかったフィールドは, expected_head の revision から引き継ぐ. blob_sha256 を変更する場合は, blob を事前に保存しておく必要がある. 出力専用のフィールドは, 設定しても無視する.
+	Content *RevisionContent `protobuf:"bytes,5,opt,name=content,proto3" json:"content,omitempty"`
+	// update_mask は, content のうち変更するフィールド (AIP-134). パスには content 内のフィールド名 (例: blob_sha256) を指定する. 省略するか空の場合は, content で値が設定されているフィールドを変更する.
+	// 値を空にしたフィールドを指定すると, そのフィールドを消去する. ただし blob_sha256 は消去できず, INVALID_ARGUMENT になる. ワイルドカード "*" や存在しないフィールド名も INVALID_ARGUMENT になる. 出力専用のフィールドは, 指定しても無視する.
+	UpdateMask    *fieldmaskpb.FieldMask `protobuf:"bytes,6,opt,name=update_mask,json=updateMask,proto3" json:"update_mask,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -575,11 +686,18 @@ func (x *CommitRevisionRequest) GetParents() []string {
 	return nil
 }
 
-func (x *CommitRevisionRequest) GetBlobSha256() string {
+func (x *CommitRevisionRequest) GetContent() *RevisionContent {
 	if x != nil {
-		return x.BlobSha256
+		return x.Content
 	}
-	return ""
+	return nil
+}
+
+func (x *CommitRevisionRequest) GetUpdateMask() *fieldmaskpb.FieldMask {
+	if x != nil {
+		return x.UpdateMask
+	}
+	return nil
 }
 
 // CommitRevisionResponse は, CommitRevision のレスポンス.
@@ -678,11 +796,10 @@ var File_lyell_api_v1alpha1_item_service_proto protoreflect.FileDescriptor
 
 const file_lyell_api_v1alpha1_item_service_proto_rawDesc = "" +
 	"\n" +
-	"%lyell/api/v1alpha1/item_service.proto\x12\x12lyell.api.v1alpha1\x1a\x1dlyell/api/v1alpha1/item.proto\"f\n" +
+	"%lyell/api/v1alpha1/item_service.proto\x12\x12lyell.api.v1alpha1\x1a google/protobuf/field_mask.proto\x1a\x1dlyell/api/v1alpha1/item.proto\"\x97\x01\n" +
 	"\x11CreateItemRequest\x120\n" +
-	"\x04kind\x18\x01 \x01(\x0e2\x1c.lyell.api.v1alpha1.ItemKindR\x04kind\x12\x1f\n" +
-	"\vblob_sha256\x18\x02 \x01(\tR\n" +
-	"blobSha256\"|\n" +
+	"\x04kind\x18\x01 \x01(\x0e2\x1c.lyell.api.v1alpha1.ItemKindR\x04kind\x12=\n" +
+	"\acontent\x18\x03 \x01(\v2#.lyell.api.v1alpha1.RevisionContentR\acontentJ\x04\b\x02\x10\x03R\vblob_sha256\"|\n" +
 	"\x12CreateItemResponse\x12,\n" +
 	"\x04item\x18\x01 \x01(\v2\x18.lyell.api.v1alpha1.ItemR\x04item\x128\n" +
 	"\brevision\x18\x02 \x01(\v2\x1c.lyell.api.v1alpha1.RevisionR\brevision\" \n" +
@@ -707,17 +824,36 @@ const file_lyell_api_v1alpha1_item_service_proto_rawDesc = "" +
 	"\x12GetRevisionRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\"O\n" +
 	"\x13GetRevisionResponse\x128\n" +
-	"\brevision\x18\x01 \x01(\v2\x1c.lyell.api.v1alpha1.RevisionR\brevision\"\x90\x01\n" +
+	"\brevision\x18\x01 \x01(\v2\x1c.lyell.api.v1alpha1.RevisionR\brevision\"\xfe\x01\n" +
 	"\x15CommitRevisionRequest\x12\x17\n" +
 	"\aitem_id\x18\x01 \x01(\tR\x06itemId\x12#\n" +
 	"\rexpected_head\x18\x02 \x01(\tR\fexpectedHead\x12\x18\n" +
-	"\aparents\x18\x03 \x03(\tR\aparents\x12\x1f\n" +
-	"\vblob_sha256\x18\x04 \x01(\tR\n" +
-	"blobSha256\"R\n" +
+	"\aparents\x18\x03 \x03(\tR\aparents\x12=\n" +
+	"\acontent\x18\x05 \x01(\v2#.lyell.api.v1alpha1.RevisionContentR\acontent\x12;\n" +
+	"\vupdate_mask\x18\x06 \x01(\v2\x1a.google.protobuf.FieldMaskR\n" +
+	"updateMaskJ\x04\b\x04\x10\x05R\vblob_sha256\"R\n" +
 	"\x16CommitRevisionResponse\x128\n" +
 	"\brevision\x18\x01 \x01(\v2\x1c.lyell.api.v1alpha1.RevisionR\brevision\".\n" +
 	"\tHeadMoved\x12!\n" +
-	"\fcurrent_head\x18\x01 \x01(\tR\vcurrentHead2\xf0\x03\n" +
+	"\fcurrent_head\x18\x01 \x01(\tR\vcurrentHead*\x88\x06\n" +
+	"\x14FieldViolationReason\x12&\n" +
+	"\"FIELD_VIOLATION_REASON_UNSPECIFIED\x10\x00\x12'\n" +
+	"#FIELD_VIOLATION_REASON_ID_MALFORMED\x10\x01\x120\n" +
+	",FIELD_VIOLATION_REASON_BLOB_SHA256_MALFORMED\x10\x02\x12+\n" +
+	"'FIELD_VIOLATION_REASON_KIND_UNSPECIFIED\x10\x03\x12'\n" +
+	"#FIELD_VIOLATION_REASON_KIND_UNKNOWN\x10\x04\x12+\n" +
+	"'FIELD_VIOLATION_REASON_KIND_UNSUPPORTED\x10\x05\x12+\n" +
+	"'FIELD_VIOLATION_REASON_PARENTS_TOO_MANY\x10\x06\x12,\n" +
+	"(FIELD_VIOLATION_REASON_PARENTS_DUPLICATE\x10\a\x128\n" +
+	"4FIELD_VIOLATION_REASON_PARENTS_MISSING_EXPECTED_HEAD\x10\b\x12-\n" +
+	")FIELD_VIOLATION_REASON_PAGE_SIZE_NEGATIVE\x10\t\x12/\n" +
+	"+FIELD_VIOLATION_REASON_PAGE_TOKEN_MALFORMED\x10\n" +
+	"\x12.\n" +
+	"*FIELD_VIOLATION_REASON_PAGE_TOKEN_MISMATCH\x10\v\x12/\n" +
+	"+FIELD_VIOLATION_REASON_BLOB_SHA256_REQUIRED\x10\f\x12/\n" +
+	"+FIELD_VIOLATION_REASON_UPDATE_MASK_WILDCARD\x10\r\x124\n" +
+	"0FIELD_VIOLATION_REASON_UPDATE_MASK_FIELD_UNKNOWN\x10\x0e\x12-\n" +
+	")FIELD_VIOLATION_REASON_REVISION_UNCHANGED\x10\x0f2\xf0\x03\n" +
 	"\vItemService\x12[\n" +
 	"\n" +
 	"CreateItem\x12%.lyell.api.v1alpha1.CreateItemRequest\x1a&.lyell.api.v1alpha1.CreateItemResponse\x12W\n" +
@@ -738,49 +874,56 @@ func file_lyell_api_v1alpha1_item_service_proto_rawDescGZIP() []byte {
 	return file_lyell_api_v1alpha1_item_service_proto_rawDescData
 }
 
+var file_lyell_api_v1alpha1_item_service_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
 var file_lyell_api_v1alpha1_item_service_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_lyell_api_v1alpha1_item_service_proto_goTypes = []any{
-	(*CreateItemRequest)(nil),      // 0: lyell.api.v1alpha1.CreateItemRequest
-	(*CreateItemResponse)(nil),     // 1: lyell.api.v1alpha1.CreateItemResponse
-	(*GetItemRequest)(nil),         // 2: lyell.api.v1alpha1.GetItemRequest
-	(*GetItemResponse)(nil),        // 3: lyell.api.v1alpha1.GetItemResponse
-	(*ListItemsRequest)(nil),       // 4: lyell.api.v1alpha1.ListItemsRequest
-	(*ListItemsResponse)(nil),      // 5: lyell.api.v1alpha1.ListItemsResponse
-	(*ItemEntry)(nil),              // 6: lyell.api.v1alpha1.ItemEntry
-	(*GetRevisionRequest)(nil),     // 7: lyell.api.v1alpha1.GetRevisionRequest
-	(*GetRevisionResponse)(nil),    // 8: lyell.api.v1alpha1.GetRevisionResponse
-	(*CommitRevisionRequest)(nil),  // 9: lyell.api.v1alpha1.CommitRevisionRequest
-	(*CommitRevisionResponse)(nil), // 10: lyell.api.v1alpha1.CommitRevisionResponse
-	(*HeadMoved)(nil),              // 11: lyell.api.v1alpha1.HeadMoved
-	(ItemKind)(0),                  // 12: lyell.api.v1alpha1.ItemKind
-	(*Item)(nil),                   // 13: lyell.api.v1alpha1.Item
-	(*Revision)(nil),               // 14: lyell.api.v1alpha1.Revision
+	(FieldViolationReason)(0),      // 0: lyell.api.v1alpha1.FieldViolationReason
+	(*CreateItemRequest)(nil),      // 1: lyell.api.v1alpha1.CreateItemRequest
+	(*CreateItemResponse)(nil),     // 2: lyell.api.v1alpha1.CreateItemResponse
+	(*GetItemRequest)(nil),         // 3: lyell.api.v1alpha1.GetItemRequest
+	(*GetItemResponse)(nil),        // 4: lyell.api.v1alpha1.GetItemResponse
+	(*ListItemsRequest)(nil),       // 5: lyell.api.v1alpha1.ListItemsRequest
+	(*ListItemsResponse)(nil),      // 6: lyell.api.v1alpha1.ListItemsResponse
+	(*ItemEntry)(nil),              // 7: lyell.api.v1alpha1.ItemEntry
+	(*GetRevisionRequest)(nil),     // 8: lyell.api.v1alpha1.GetRevisionRequest
+	(*GetRevisionResponse)(nil),    // 9: lyell.api.v1alpha1.GetRevisionResponse
+	(*CommitRevisionRequest)(nil),  // 10: lyell.api.v1alpha1.CommitRevisionRequest
+	(*CommitRevisionResponse)(nil), // 11: lyell.api.v1alpha1.CommitRevisionResponse
+	(*HeadMoved)(nil),              // 12: lyell.api.v1alpha1.HeadMoved
+	(ItemKind)(0),                  // 13: lyell.api.v1alpha1.ItemKind
+	(*RevisionContent)(nil),        // 14: lyell.api.v1alpha1.RevisionContent
+	(*Item)(nil),                   // 15: lyell.api.v1alpha1.Item
+	(*Revision)(nil),               // 16: lyell.api.v1alpha1.Revision
+	(*fieldmaskpb.FieldMask)(nil),  // 17: google.protobuf.FieldMask
 }
 var file_lyell_api_v1alpha1_item_service_proto_depIdxs = []int32{
-	12, // 0: lyell.api.v1alpha1.CreateItemRequest.kind:type_name -> lyell.api.v1alpha1.ItemKind
-	13, // 1: lyell.api.v1alpha1.CreateItemResponse.item:type_name -> lyell.api.v1alpha1.Item
-	14, // 2: lyell.api.v1alpha1.CreateItemResponse.revision:type_name -> lyell.api.v1alpha1.Revision
-	13, // 3: lyell.api.v1alpha1.GetItemResponse.item:type_name -> lyell.api.v1alpha1.Item
-	6,  // 4: lyell.api.v1alpha1.ListItemsResponse.entries:type_name -> lyell.api.v1alpha1.ItemEntry
-	13, // 5: lyell.api.v1alpha1.ItemEntry.item:type_name -> lyell.api.v1alpha1.Item
-	14, // 6: lyell.api.v1alpha1.ItemEntry.head_revision:type_name -> lyell.api.v1alpha1.Revision
-	14, // 7: lyell.api.v1alpha1.GetRevisionResponse.revision:type_name -> lyell.api.v1alpha1.Revision
-	14, // 8: lyell.api.v1alpha1.CommitRevisionResponse.revision:type_name -> lyell.api.v1alpha1.Revision
-	0,  // 9: lyell.api.v1alpha1.ItemService.CreateItem:input_type -> lyell.api.v1alpha1.CreateItemRequest
-	2,  // 10: lyell.api.v1alpha1.ItemService.GetItem:input_type -> lyell.api.v1alpha1.GetItemRequest
-	4,  // 11: lyell.api.v1alpha1.ItemService.ListItems:input_type -> lyell.api.v1alpha1.ListItemsRequest
-	7,  // 12: lyell.api.v1alpha1.ItemService.GetRevision:input_type -> lyell.api.v1alpha1.GetRevisionRequest
-	9,  // 13: lyell.api.v1alpha1.ItemService.CommitRevision:input_type -> lyell.api.v1alpha1.CommitRevisionRequest
-	1,  // 14: lyell.api.v1alpha1.ItemService.CreateItem:output_type -> lyell.api.v1alpha1.CreateItemResponse
-	3,  // 15: lyell.api.v1alpha1.ItemService.GetItem:output_type -> lyell.api.v1alpha1.GetItemResponse
-	5,  // 16: lyell.api.v1alpha1.ItemService.ListItems:output_type -> lyell.api.v1alpha1.ListItemsResponse
-	8,  // 17: lyell.api.v1alpha1.ItemService.GetRevision:output_type -> lyell.api.v1alpha1.GetRevisionResponse
-	10, // 18: lyell.api.v1alpha1.ItemService.CommitRevision:output_type -> lyell.api.v1alpha1.CommitRevisionResponse
-	14, // [14:19] is the sub-list for method output_type
-	9,  // [9:14] is the sub-list for method input_type
-	9,  // [9:9] is the sub-list for extension type_name
-	9,  // [9:9] is the sub-list for extension extendee
-	0,  // [0:9] is the sub-list for field type_name
+	13, // 0: lyell.api.v1alpha1.CreateItemRequest.kind:type_name -> lyell.api.v1alpha1.ItemKind
+	14, // 1: lyell.api.v1alpha1.CreateItemRequest.content:type_name -> lyell.api.v1alpha1.RevisionContent
+	15, // 2: lyell.api.v1alpha1.CreateItemResponse.item:type_name -> lyell.api.v1alpha1.Item
+	16, // 3: lyell.api.v1alpha1.CreateItemResponse.revision:type_name -> lyell.api.v1alpha1.Revision
+	15, // 4: lyell.api.v1alpha1.GetItemResponse.item:type_name -> lyell.api.v1alpha1.Item
+	7,  // 5: lyell.api.v1alpha1.ListItemsResponse.entries:type_name -> lyell.api.v1alpha1.ItemEntry
+	15, // 6: lyell.api.v1alpha1.ItemEntry.item:type_name -> lyell.api.v1alpha1.Item
+	16, // 7: lyell.api.v1alpha1.ItemEntry.head_revision:type_name -> lyell.api.v1alpha1.Revision
+	16, // 8: lyell.api.v1alpha1.GetRevisionResponse.revision:type_name -> lyell.api.v1alpha1.Revision
+	14, // 9: lyell.api.v1alpha1.CommitRevisionRequest.content:type_name -> lyell.api.v1alpha1.RevisionContent
+	17, // 10: lyell.api.v1alpha1.CommitRevisionRequest.update_mask:type_name -> google.protobuf.FieldMask
+	16, // 11: lyell.api.v1alpha1.CommitRevisionResponse.revision:type_name -> lyell.api.v1alpha1.Revision
+	1,  // 12: lyell.api.v1alpha1.ItemService.CreateItem:input_type -> lyell.api.v1alpha1.CreateItemRequest
+	3,  // 13: lyell.api.v1alpha1.ItemService.GetItem:input_type -> lyell.api.v1alpha1.GetItemRequest
+	5,  // 14: lyell.api.v1alpha1.ItemService.ListItems:input_type -> lyell.api.v1alpha1.ListItemsRequest
+	8,  // 15: lyell.api.v1alpha1.ItemService.GetRevision:input_type -> lyell.api.v1alpha1.GetRevisionRequest
+	10, // 16: lyell.api.v1alpha1.ItemService.CommitRevision:input_type -> lyell.api.v1alpha1.CommitRevisionRequest
+	2,  // 17: lyell.api.v1alpha1.ItemService.CreateItem:output_type -> lyell.api.v1alpha1.CreateItemResponse
+	4,  // 18: lyell.api.v1alpha1.ItemService.GetItem:output_type -> lyell.api.v1alpha1.GetItemResponse
+	6,  // 19: lyell.api.v1alpha1.ItemService.ListItems:output_type -> lyell.api.v1alpha1.ListItemsResponse
+	9,  // 20: lyell.api.v1alpha1.ItemService.GetRevision:output_type -> lyell.api.v1alpha1.GetRevisionResponse
+	11, // 21: lyell.api.v1alpha1.ItemService.CommitRevision:output_type -> lyell.api.v1alpha1.CommitRevisionResponse
+	17, // [17:22] is the sub-list for method output_type
+	12, // [12:17] is the sub-list for method input_type
+	12, // [12:12] is the sub-list for extension type_name
+	12, // [12:12] is the sub-list for extension extendee
+	0,  // [0:12] is the sub-list for field type_name
 }
 
 func init() { file_lyell_api_v1alpha1_item_service_proto_init() }
@@ -794,13 +937,14 @@ func file_lyell_api_v1alpha1_item_service_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_lyell_api_v1alpha1_item_service_proto_rawDesc), len(file_lyell_api_v1alpha1_item_service_proto_rawDesc)),
-			NumEnums:      0,
+			NumEnums:      1,
 			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
 		GoTypes:           file_lyell_api_v1alpha1_item_service_proto_goTypes,
 		DependencyIndexes: file_lyell_api_v1alpha1_item_service_proto_depIdxs,
+		EnumInfos:         file_lyell_api_v1alpha1_item_service_proto_enumTypes,
 		MessageInfos:      file_lyell_api_v1alpha1_item_service_proto_msgTypes,
 	}.Build()
 	File_lyell_api_v1alpha1_item_service_proto = out.File

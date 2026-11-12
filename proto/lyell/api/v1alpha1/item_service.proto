@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package lyell.api.v1alpha1;
 
+import "google/protobuf/field_mask.proto";
 import "lyell/api/v1alpha1/item.proto";
 
 option go_package = "github.com/yamaoki-lab/lyell/gen/lyell/api/v1alpha1;apiv1alpha1";
@@ -30,17 +31,21 @@ service ItemService {
   }
 
   // CommitRevision は, item に revision を追加し, item の head をその revision へ進める. fast-forward のみを受け付ける.
+  // 統合でない (親が1つの) revision の content が, expected_head の revision と同じなら, 何も記録せずに INVALID_ARGUMENT を返す.
   // head が expected_head から変更されていたら, 何も記録せずに ABORTED を返し, 詳細情報に HeadMoved を付与する.
-  // blob が存在しなければ, FAILED_PRECONDITION を返す.
+  // blob が存在しなければ, FAILED_PRECONDITION を返す. 引き継ぎ元となる expected_head の revision が間引かれていても, FAILED_PRECONDITION を返す.
   rpc CommitRevision(CommitRevisionRequest) returns (CommitRevisionResponse);
 }
 
 // CreateItemRequest は, CreateItem のリクエスト.
 message CreateItemRequest {
+  reserved 2;
+  reserved "blob_sha256";
+
   // kind は item の種類. 現在は ITEM_KIND_ASSET のみを受け付ける.
   ItemKind kind = 1;
-  // blob_sha256 は, 最初の revision の中身の SHA-256 (小文字の16進数64文字). 事前に保存しておく必要がある.
-  string blob_sha256 = 2;
+  // content は, 最初の revision の中身. blob_sha256 は必須で, blob を事前に保存しておく必要がある. blob_sha256 以外のフィールドは出力専用で, 設定しても無視する.
+  RevisionContent content = 3;
 }
 
 // CreateItemResponse は, CreateItem のレスポンス.
@@ -109,14 +114,20 @@ message GetRevisionResponse {
 
 // CommitRevisionRequest は, CommitRevision のリクエスト.
 message CommitRevisionRequest {
+  reserved 4;
+  reserved "blob_sha256";
+
   // item_id は, revision を追加する item の ID.
   string item_id = 1;
   // expected_head は, 呼び出し元が想定している現在の head. 現在の head と異なれば ABORTED を返す.
   string expected_head = 2;
   // parents は, 新しい revision の親となる revision の ID. 空なら expected_head のみを親にする (最も一般的な fast-forward). 指定する場合は expected_head を必ず含める. 現在の上限は2つで, 超えると INVALID_ARGUMENT を返す. 上限は今後引き上げる可能性がある.
   repeated string parents = 3;
-  // blob_sha256 は, 新しい revision の中身の SHA-256 (小文字の16進数64文字). 事前に保存しておく必要がある.
-  string blob_sha256 = 4;
+  // content は, 新しい revision の中身. update_mask で変更の対象にしなかったフィールドは, expected_head の revision から引き継ぐ. blob_sha256 を変更する場合は, blob を事前に保存しておく必要がある. 出力専用のフィールドは, 設定しても無視する.
+  RevisionContent content = 5;
+  // update_mask は, content のうち変更するフィールド (AIP-134). パスには content 内のフィールド名 (例: blob_sha256) を指定する. 省略するか空の場合は, content で値が設定されているフィールドを変更する.
+  // 値を空にしたフィールドを指定すると, そのフィールドを消去する. ただし blob_sha256 は消去できず, INVALID_ARGUMENT になる. ワイルドカード "*" や存在しないフィールド名も INVALID_ARGUMENT になる. 出力専用のフィールドは, 指定しても無視する.
+  google.protobuf.FieldMask update_mask = 6;
 }
 
 // CommitRevisionResponse は, CommitRevision のレスポンス.
@@ -129,4 +140,42 @@ message CommitRevisionResponse {
 message HeadMoved {
   // current_head は, リクエストが拒否された時点の item の head.
   string current_head = 1;
+}
+
+// FieldViolationReason は, ItemService が INVALID_ARGUMENT を返す時の拒否の理由.
+// INVALID_ARGUMENT には詳細情報として google.rpc.BadRequest (AIP-193) を付与する. field_violations の field はリクエスト内のフィールドのパス (例: content.blob_sha256, parents[1]. 添字は0から数える), reason は値の名前から接頭辞 FIELD_VIOLATION_REASON_ を除いたもの (例: ID_MALFORMED), description は日本語の説明.
+// クライアントは reason で理由を判別し, 独自のメッセージを表示できる. filter と order_by の拒否には, まだ reason を設定しない.
+enum FieldViolationReason {
+  // FIELD_VIOLATION_REASON_UNSPECIFIED は使用しない.
+  FIELD_VIOLATION_REASON_UNSPECIFIED = 0;
+  // FIELD_VIOLATION_REASON_ID_MALFORMED は, ID が応答で返す表記 (小文字でハイフン区切りの36文字) ではないこと. 空の場合も含む.
+  FIELD_VIOLATION_REASON_ID_MALFORMED = 1;
+  // FIELD_VIOLATION_REASON_BLOB_SHA256_MALFORMED は, SHA-256 が小文字の16進数64文字ではないこと.
+  FIELD_VIOLATION_REASON_BLOB_SHA256_MALFORMED = 2;
+  // FIELD_VIOLATION_REASON_KIND_UNSPECIFIED は, item の種類が指定されていないこと.
+  FIELD_VIOLATION_REASON_KIND_UNSPECIFIED = 3;
+  // FIELD_VIOLATION_REASON_KIND_UNKNOWN は, item の種類が ItemKind に存在しない値であること.
+  FIELD_VIOLATION_REASON_KIND_UNKNOWN = 4;
+  // FIELD_VIOLATION_REASON_KIND_UNSUPPORTED は, item の種類は ItemKind に存在するが, まだ作成できないこと (ITEM_KIND_COLLECTION).
+  FIELD_VIOLATION_REASON_KIND_UNSUPPORTED = 5;
+  // FIELD_VIOLATION_REASON_PARENTS_TOO_MANY は, parents の数が上限を超えていること.
+  FIELD_VIOLATION_REASON_PARENTS_TOO_MANY = 6;
+  // FIELD_VIOLATION_REASON_PARENTS_DUPLICATE は, 同じ親が2回以上指定されていること. field は2つ目の親を指す.
+  FIELD_VIOLATION_REASON_PARENTS_DUPLICATE = 7;
+  // FIELD_VIOLATION_REASON_PARENTS_MISSING_EXPECTED_HEAD は, parents に expected_head が含まれていないこと.
+  FIELD_VIOLATION_REASON_PARENTS_MISSING_EXPECTED_HEAD = 8;
+  // FIELD_VIOLATION_REASON_PAGE_SIZE_NEGATIVE は, page_size が負の値であること.
+  FIELD_VIOLATION_REASON_PAGE_SIZE_NEGATIVE = 9;
+  // FIELD_VIOLATION_REASON_PAGE_TOKEN_MALFORMED は, page_token が, ListItems の返した next_page_token の形式ではないこと.
+  FIELD_VIOLATION_REASON_PAGE_TOKEN_MALFORMED = 10;
+  // FIELD_VIOLATION_REASON_PAGE_TOKEN_MISMATCH は, page_token を next_page_token として返したリクエストと, filter または order_by が異なること.
+  FIELD_VIOLATION_REASON_PAGE_TOKEN_MISMATCH = 11;
+  // FIELD_VIOLATION_REASON_BLOB_SHA256_REQUIRED は, 必須の blob_sha256 が空であること. CommitRevision では, update_mask に blob_sha256 を指定して値を空にした場合.
+  FIELD_VIOLATION_REASON_BLOB_SHA256_REQUIRED = 12;
+  // FIELD_VIOLATION_REASON_UPDATE_MASK_WILDCARD は, update_mask にワイルドカード "*" が指定されていること. field は update_mask.paths[i].
+  FIELD_VIOLATION_REASON_UPDATE_MASK_WILDCARD = 13;
+  // FIELD_VIOLATION_REASON_UPDATE_MASK_FIELD_UNKNOWN は, update_mask のパスが content に存在しないフィールドを指していること. field は update_mask.paths[i].
+  FIELD_VIOLATION_REASON_UPDATE_MASK_FIELD_UNKNOWN = 14;
+  // FIELD_VIOLATION_REASON_REVISION_UNCHANGED は, 親が1つの revision の content が, 出力専用のフィールドを除いて expected_head の revision と同じであること. field は content. 親が2つ (統合) なら, 同じでも受け付ける.
+  FIELD_VIOLATION_REASON_REVISION_UNCHANGED = 15;
 }

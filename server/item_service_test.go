@@ -3,17 +3,21 @@ package server
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/fieldmaskpb"
 
 	apiv1alpha1 "github.com/yamaoki-lab/lyell/gen/lyell/api/v1alpha1"
 	"github.com/yamaoki-lab/lyell/gen/lyell/api/v1alpha1/apiv1alpha1connect"
@@ -27,10 +31,15 @@ func newTestServer(t *testing.T) (*Server, apiv1alpha1connect.ItemServiceClient)
 	return s, apiv1alpha1connect.NewItemServiceClient(hs.Client(), hs.URL)
 }
 
-// startTestServer は, 一時ディレクトリに DB と blob の保存先を作成し, Register した mux で httptest のサーバを起動する.
+// startTestServer は, 一時ディレクトリで startTestServerIn を呼ぶ.
 func startTestServer(t *testing.T) (*Server, *httptest.Server) {
 	t.Helper()
-	dir := t.TempDir()
+	return startTestServerIn(t, t.TempDir())
+}
+
+// startTestServerIn は, dir に DB (lyell.db) と blob の保存先を作成し, Register した mux で httptest のサーバを起動する.
+func startTestServerIn(t *testing.T, dir string) (*Server, *httptest.Server) {
+	t.Helper()
 	s, err := Open(context.Background(), Config{DBPath: filepath.Join(dir, "lyell.db"), BlobDir: filepath.Join(dir, "blobs")})
 	if err != nil {
 		t.Fatalf("Open() error = %v, want nil", err)
@@ -56,7 +65,7 @@ func putBlob(t *testing.T, s *Server, data string) string {
 
 func createItem(t *testing.T, s *Server, c apiv1alpha1connect.ItemServiceClient, data string) *apiv1alpha1.CreateItemResponse {
 	t.Helper()
-	res, err := c.CreateItem(context.Background(), connect.NewRequest(&apiv1alpha1.CreateItemRequest{Kind: apiv1alpha1.ItemKind_ITEM_KIND_ASSET, BlobSha256: putBlob(t, s, data)}))
+	res, err := c.CreateItem(context.Background(), connect.NewRequest(&apiv1alpha1.CreateItemRequest{Kind: apiv1alpha1.ItemKind_ITEM_KIND_ASSET, Content: &apiv1alpha1.RevisionContent{BlobSha256: putBlob(t, s, data)}}))
 	if err != nil {
 		t.Fatalf("CreateItem() error = %v, want nil", err)
 	}
@@ -67,6 +76,41 @@ func wantCode(t *testing.T, name string, err error, want connect.Code) {
 	t.Helper()
 	if got := connect.CodeOf(err); got != want {
 		t.Errorf("%s の error = %v (%v), want %v", name, err, got, want)
+	}
+}
+
+// wantViolation は, err が INVALID_ARGUMENT で, 詳細情報の BadRequest に, field と reason の組が1つだけ入っていることを確かめる. reason が空なら, reason が設定されていないことを確かめる.
+func wantViolation(t *testing.T, name string, err error, field, reason string) {
+	t.Helper()
+	wantCode(t, name, err, connect.CodeInvalidArgument)
+	var ce *connect.Error
+	if !errors.As(err, &ce) {
+		return
+	}
+	var got []*errdetails.BadRequest_FieldViolation
+	for _, d := range ce.Details() {
+		if v, err := d.Value(); err == nil {
+			if br, ok := v.(*errdetails.BadRequest); ok {
+				got = append(got, br.GetFieldViolations()...)
+			}
+		}
+	}
+	if len(got) != 1 || got[0].GetField() != field || got[0].GetReason() != reason || got[0].GetDescription() == "" {
+		t.Errorf("%s の BadRequest = %v, want field %q, reason %q と空でない description の1件", name, got, field, reason)
+	}
+}
+
+func TestFieldViolationReason_Names(t *testing.T) {
+	// 値の名前から接頭辞を除いた reason は, google.rpc.BadRequest の決まり (63文字以下の UPPER_SNAKE_CASE) を満たす必要がある.
+	valid := regexp.MustCompile(`^[A-Z][A-Z0-9_]+[A-Z0-9]$`)
+	for n, name := range apiv1alpha1.FieldViolationReason_name {
+		if n == 0 {
+			continue
+		}
+		got := reasonName(apiv1alpha1.FieldViolationReason(n))
+		if !strings.HasPrefix(name, reasonPrefix) || len(got) > 63 || !valid.MatchString(got) {
+			t.Errorf("%s の reason = %q, want %s で始まる名前から接頭辞を除いた, 63文字以下の UPPER_SNAKE_CASE", name, got, reasonPrefix)
+		}
 	}
 }
 
@@ -119,16 +163,25 @@ func TestCreateItem_RejectsBadRequest(t *testing.T) {
 		name string
 		req  *apiv1alpha1.CreateItemRequest
 		want connect.Code
+		// field と reason は, want が INVALID_ARGUMENT の時に BadRequest で返すもの.
+		field, reason string
 	}{
-		{name: "種類が指定されていない", req: &apiv1alpha1.CreateItemRequest{BlobSha256: sum}, want: connect.CodeInvalidArgument},
-		{name: "collection", req: &apiv1alpha1.CreateItemRequest{Kind: apiv1alpha1.ItemKind_ITEM_KIND_COLLECTION, BlobSha256: sum}, want: connect.CodeInvalidArgument},
-		{name: "SHA-256 が大文字", req: &apiv1alpha1.CreateItemRequest{Kind: apiv1alpha1.ItemKind_ITEM_KIND_ASSET, BlobSha256: strings.ToUpper(sum)}, want: connect.CodeInvalidArgument},
-		{name: "SHA-256 が短い", req: &apiv1alpha1.CreateItemRequest{Kind: apiv1alpha1.ItemKind_ITEM_KIND_ASSET, BlobSha256: sum[:63]}, want: connect.CodeInvalidArgument},
-		{name: "blob が存在しない", req: &apiv1alpha1.CreateItemRequest{Kind: apiv1alpha1.ItemKind_ITEM_KIND_ASSET, BlobSha256: missing}, want: connect.CodeFailedPrecondition},
+		{name: "種類が指定されていない", req: &apiv1alpha1.CreateItemRequest{Content: &apiv1alpha1.RevisionContent{BlobSha256: sum}}, want: connect.CodeInvalidArgument, field: "kind", reason: "KIND_UNSPECIFIED"},
+		{name: "存在しない種類", req: &apiv1alpha1.CreateItemRequest{Kind: 99, Content: &apiv1alpha1.RevisionContent{BlobSha256: sum}}, want: connect.CodeInvalidArgument, field: "kind", reason: "KIND_UNKNOWN"},
+		{name: "collection", req: &apiv1alpha1.CreateItemRequest{Kind: apiv1alpha1.ItemKind_ITEM_KIND_COLLECTION, Content: &apiv1alpha1.RevisionContent{BlobSha256: sum}}, want: connect.CodeInvalidArgument, field: "kind", reason: "KIND_UNSUPPORTED"},
+		{name: "SHA-256 が大文字", req: &apiv1alpha1.CreateItemRequest{Kind: apiv1alpha1.ItemKind_ITEM_KIND_ASSET, Content: &apiv1alpha1.RevisionContent{BlobSha256: strings.ToUpper(sum)}}, want: connect.CodeInvalidArgument, field: "content.blob_sha256", reason: "BLOB_SHA256_MALFORMED"},
+		{name: "SHA-256 が短い", req: &apiv1alpha1.CreateItemRequest{Kind: apiv1alpha1.ItemKind_ITEM_KIND_ASSET, Content: &apiv1alpha1.RevisionContent{BlobSha256: sum[:63]}}, want: connect.CodeInvalidArgument, field: "content.blob_sha256", reason: "BLOB_SHA256_MALFORMED"},
+		{name: "SHA-256 が空", req: &apiv1alpha1.CreateItemRequest{Kind: apiv1alpha1.ItemKind_ITEM_KIND_ASSET, Content: &apiv1alpha1.RevisionContent{}}, want: connect.CodeInvalidArgument, field: "content.blob_sha256", reason: "BLOB_SHA256_REQUIRED"},
+		{name: "content が無い", req: &apiv1alpha1.CreateItemRequest{Kind: apiv1alpha1.ItemKind_ITEM_KIND_ASSET}, want: connect.CodeInvalidArgument, field: "content.blob_sha256", reason: "BLOB_SHA256_REQUIRED"},
+		{name: "blob が存在しない", req: &apiv1alpha1.CreateItemRequest{Kind: apiv1alpha1.ItemKind_ITEM_KIND_ASSET, Content: &apiv1alpha1.RevisionContent{BlobSha256: missing}}, want: connect.CodeFailedPrecondition},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := c.CreateItem(ctx, connect.NewRequest(tt.req))
+			if tt.want == connect.CodeInvalidArgument {
+				wantViolation(t, "CreateItem()", err, tt.field, tt.reason)
+				return
+			}
 			wantCode(t, "CreateItem()", err, tt.want)
 		})
 	}
@@ -145,6 +198,7 @@ func TestGet_RejectsUnknownAndMalformedID(t *testing.T) {
 		want connect.Code
 	}{
 		{name: "存在しない", id: unknown.String(), want: connect.CodeNotFound},
+		{name: "空", id: "", want: connect.CodeInvalidArgument},
 		{name: "ID の形式でない", id: "item", want: connect.CodeInvalidArgument},
 		// uuid.Parse は受け付けるが, API の表記ではない.
 		{name: "波括弧付き", id: "{" + unknown.String() + "}", want: connect.CodeInvalidArgument},
@@ -155,9 +209,14 @@ func TestGet_RejectsUnknownAndMalformedID(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := c.GetItem(ctx, connect.NewRequest(&apiv1alpha1.GetItemRequest{Id: tt.id}))
+			_, rerr := c.GetRevision(ctx, connect.NewRequest(&apiv1alpha1.GetRevisionRequest{Id: tt.id}))
+			if tt.want == connect.CodeInvalidArgument {
+				wantViolation(t, "GetItem()", err, "id", "ID_MALFORMED")
+				wantViolation(t, "GetRevision()", rerr, "id", "ID_MALFORMED")
+				return
+			}
 			wantCode(t, "GetItem()", err, tt.want)
-			_, err = c.GetRevision(ctx, connect.NewRequest(&apiv1alpha1.GetRevisionRequest{Id: tt.id}))
-			wantCode(t, "GetRevision()", err, tt.want)
+			wantCode(t, "GetRevision()", rerr, tt.want)
 		})
 	}
 }
@@ -169,7 +228,7 @@ func TestCommitRevision_AdvancesHead(t *testing.T) {
 	r1 := created.GetItem().GetHead()
 
 	// parents を指定しなければ, expected_head だけが親になる.
-	res, err := c.CommitRevision(ctx, connect.NewRequest(&apiv1alpha1.CommitRevisionRequest{ItemId: created.GetItem().GetId(), ExpectedHead: r1, BlobSha256: putBlob(t, s, "r2")}))
+	res, err := c.CommitRevision(ctx, connect.NewRequest(&apiv1alpha1.CommitRevisionRequest{ItemId: created.GetItem().GetId(), ExpectedHead: r1, Content: &apiv1alpha1.RevisionContent{BlobSha256: putBlob(t, s, "r2")}}))
 	if err != nil {
 		t.Fatalf("CommitRevision() error = %v, want nil", err)
 	}
@@ -191,14 +250,14 @@ func TestCommitRevision_StaleHeadIsAbortedWithHeadMoved(t *testing.T) {
 	ctx := context.Background()
 	created := createItem(t, s, c, "r1")
 	itemID, r1 := created.GetItem().GetId(), created.GetItem().GetHead()
-	res, err := c.CommitRevision(ctx, connect.NewRequest(&apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, BlobSha256: putBlob(t, s, "r2")}))
+	res, err := c.CommitRevision(ctx, connect.NewRequest(&apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Content: &apiv1alpha1.RevisionContent{BlobSha256: putBlob(t, s, "r2")}}))
 	if err != nil {
 		t.Fatalf("CommitRevision() error = %v, want nil", err)
 	}
 	r2 := res.Msg.GetRevision().GetId()
 
 	// head は r2 に進んでいるが, 古い r1 を前提として追加しようとする.
-	_, err = c.CommitRevision(ctx, connect.NewRequest(&apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, BlobSha256: putBlob(t, s, "stale")}))
+	_, err = c.CommitRevision(ctx, connect.NewRequest(&apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Content: &apiv1alpha1.RevisionContent{BlobSha256: putBlob(t, s, "stale")}}))
 	wantCode(t, "古い head を前提とした CommitRevision()", err, connect.CodeAborted)
 
 	// 呼び出し側が読み直さずに現在の head を取得できるよう, 詳細に HeadMoved が付いている.
@@ -219,6 +278,163 @@ func TestCommitRevision_StaleHeadIsAbortedWithHeadMoved(t *testing.T) {
 	}
 }
 
+// mask は, paths を持つ update_mask を返す.
+func mask(paths ...string) *fieldmaskpb.FieldMask {
+	return &fieldmaskpb.FieldMask{Paths: paths}
+}
+
+// commit は, CommitRevision を呼び, 追加した revision を返す.
+func commit(t *testing.T, c apiv1alpha1connect.ItemServiceClient, req *apiv1alpha1.CommitRevisionRequest) *apiv1alpha1.Revision {
+	t.Helper()
+	res, err := c.CommitRevision(context.Background(), connect.NewRequest(req))
+	if err != nil {
+		t.Fatalf("CommitRevision() error = %v, want nil", err)
+	}
+	return res.Msg.GetRevision()
+}
+
+func TestCommitRevision_UpdateMask(t *testing.T) {
+	s, c := newTestServer(t)
+	sum := putBlob(t, s, "r2")
+	// 変化のない revision は統合でしか記録できないので, 別の item の head とも統合して, 引き継いだ結果を確かめる.
+	other := createItem(t, s, c, "other").GetItem().GetHead()
+
+	tests := []struct {
+		name    string
+		content *apiv1alpha1.RevisionContent
+		mask    *fieldmaskpb.FieldMask
+		// changed は, blob_sha256 が content の値に変わるか. false なら expected_head の revision から引き継ぐ.
+		changed bool
+	}{
+		{name: "content も update_mask も無い", changed: false},
+		{name: "update_mask を省略して blob_sha256 を設定", content: &apiv1alpha1.RevisionContent{BlobSha256: sum}, changed: true},
+		{name: "空の update_mask は省略と同じ", content: &apiv1alpha1.RevisionContent{BlobSha256: sum}, mask: mask(), changed: true},
+		{name: "update_mask に blob_sha256", content: &apiv1alpha1.RevisionContent{BlobSha256: sum}, mask: mask("blob_sha256"), changed: true},
+		// update_mask を指定すると, それに含まれないフィールドは, content に値があっても変更しない.
+		{name: "update_mask に含まれない blob_sha256", content: &apiv1alpha1.RevisionContent{BlobSha256: sum}, mask: mask("create_time"), changed: false},
+		// 出力専用のフィールドは, content に値があっても, update_mask に指定しても無視する (AIP-203).
+		{name: "出力専用のフィールドだけを設定", content: &apiv1alpha1.RevisionContent{AuthorUser: "someone", BlobSize: 1}, changed: false},
+		{name: "update_mask に出力専用のフィールド", content: &apiv1alpha1.RevisionContent{AuthorUser: "someone", BlobSha256: sum}, mask: mask("author_user", "blob_sha256"), changed: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// 引き継いだのか変更したのかを blob で見分けるため, 行ごとに r2 と異なる blob の item から始める.
+			created := createItem(t, s, c, "r1")
+			r1 := created.GetRevision()
+			got := commit(t, c, &apiv1alpha1.CommitRevisionRequest{ItemId: created.GetItem().GetId(), ExpectedHead: r1.GetId(), Parents: []string{r1.GetId(), other}, Content: tt.content, UpdateMask: tt.mask})
+			want := r1.GetContent()
+			if tt.changed {
+				want = &apiv1alpha1.RevisionContent{BlobSha256: sum, BlobSize: int64(len("r2"))}
+			}
+			if gc := got.GetContent(); gc.GetBlobSha256() != want.GetBlobSha256() || gc.GetBlobSize() != want.GetBlobSize() {
+				t.Errorf("blob = %s (%d バイト), want %s (%d バイト)", gc.GetBlobSha256(), gc.GetBlobSize(), want.GetBlobSha256(), want.GetBlobSize())
+			}
+			if gc := got.GetContent(); gc.GetAuthorUser() != "anonymous" {
+				t.Errorf("author_user = %q, want server が設定する %q", gc.GetAuthorUser(), "anonymous")
+			}
+		})
+	}
+}
+
+func TestCommitRevision_RejectsUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	s, hs := startTestServerIn(t, dir)
+	c := apiv1alpha1connect.NewItemServiceClient(hs.Client(), hs.URL)
+	ctx := context.Background()
+	created := createItem(t, s, c, "r1")
+	itemID, r1 := created.GetItem().GetId(), created.GetRevision()
+	same := r1.GetContent().GetBlobSha256()
+	other := createItem(t, s, c, "other").GetItem().GetHead()
+
+	tests := []struct {
+		name string
+		req  *apiv1alpha1.CommitRevisionRequest
+	}{
+		{name: "すべて引き継ぐ", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1.GetId()}},
+		{name: "同じ blob_sha256", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1.GetId(), Content: &apiv1alpha1.RevisionContent{BlobSha256: same}}},
+		{name: "parents に expected_head だけ", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1.GetId(), Parents: []string{r1.GetId()}}},
+		// 出力専用のフィールドは比べないので, 値が異なっても変化とみなさない.
+		{name: "出力専用のフィールドだけが異なる", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1.GetId(), Content: &apiv1alpha1.RevisionContent{AuthorUser: "someone", BlobSha256: same, BlobSize: 1}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := c.CommitRevision(ctx, connect.NewRequest(tt.req))
+			wantViolation(t, "CommitRevision()", err, "content", "REVISION_UNCHANGED")
+		})
+	}
+
+	// 統合は, 中身が変わらなくても2つの履歴をまとめた記録なので受け付ける.
+	merged := commit(t, c, &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1.GetId(), Parents: []string{r1.GetId(), other}})
+
+	// 間引かれていて比べられなければ, 変わったものとして記録する.
+	thinRevision(t, filepath.Join(dir, "lyell.db"), merged.GetId())
+	commit(t, c, &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: merged.GetId(), Content: &apiv1alpha1.RevisionContent{BlobSha256: same}})
+}
+
+// thinRevision は, DB を直接書き換えて, 指定した id の revision の中身を間引く. 間引く API はまだ無い.
+func thinRevision(t *testing.T, dbPath, id string) {
+	t.Helper()
+	// ドライバ (modernc.org/sqlite) は, itemstore が登録している.
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v, want nil", err)
+	}
+	defer func() { _ = db.Close() }()
+	rid := uuid.MustParse(id)
+	res, err := db.Exec("UPDATE revisions SET created_at = NULL, author_user = NULL, author_machine = NULL, blob_sha256 = NULL, blob_size = NULL, body = NULL WHERE id = ?", rid[:])
+	if err != nil {
+		t.Fatalf("revision %s を間引けません: %v", id, err)
+	}
+	if n, err := res.RowsAffected(); err != nil || n != 1 {
+		t.Fatalf("間引いた revision の数 = %d (%v), want 1", n, err)
+	}
+}
+
+func TestCommitRevision_ThinnedExpectedHead(t *testing.T) {
+	dir := t.TempDir()
+	s, hs := startTestServerIn(t, dir)
+	c := apiv1alpha1connect.NewItemServiceClient(hs.Client(), hs.URL)
+	ctx := context.Background()
+
+	t.Run("head のまま", func(t *testing.T) {
+		created := createItem(t, s, c, "head")
+		itemID, r1 := created.GetItem().GetId(), created.GetItem().GetHead()
+		thinRevision(t, filepath.Join(dir, "lyell.db"), r1)
+
+		// 変更しないフィールドがあると, 引き継ぎ元の中身が無いので記録できない.
+		_, err := c.CommitRevision(ctx, connect.NewRequest(&apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1}))
+		wantCode(t, "間引かれた head から引き継ぐ CommitRevision()", err, connect.CodeFailedPrecondition)
+		// 全て指定すれば, 引き継ぐものが無いので記録できる.
+		commit(t, c, &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Content: &apiv1alpha1.RevisionContent{BlobSha256: putBlob(t, s, "r2")}})
+	})
+
+	t.Run("head が動いている", func(t *testing.T) {
+		created := createItem(t, s, c, "stale")
+		itemID, r1 := created.GetItem().GetId(), created.GetItem().GetHead()
+		r2 := commit(t, c, &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Content: &apiv1alpha1.RevisionContent{BlobSha256: putBlob(t, s, "r2")}}).GetId()
+		thinRevision(t, filepath.Join(dir, "lyell.db"), r1)
+
+		// 古い expected_head が間引かれていても, 早送りでない時と同じく ABORTED と現在の head を返す.
+		_, err := c.CommitRevision(ctx, connect.NewRequest(&apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1}))
+		wantCode(t, "間引かれた古い head から引き継ぐ CommitRevision()", err, connect.CodeAborted)
+		var ce *connect.Error
+		if !errors.As(err, &ce) {
+			t.Fatalf("error = %T, want *connect.Error", err)
+		}
+		var moved *apiv1alpha1.HeadMoved
+		for _, d := range ce.Details() {
+			if v, err := d.Value(); err == nil {
+				if m, ok := v.(*apiv1alpha1.HeadMoved); ok {
+					moved = m
+				}
+			}
+		}
+		if moved.GetCurrentHead() != r2 {
+			t.Errorf("HeadMoved = %v, want current_head %s", moved, r2)
+		}
+	})
+}
+
 func TestCommitRevision_ErrorCodes(t *testing.T) {
 	s, c := newTestServer(t)
 	ctx := context.Background()
@@ -227,20 +443,38 @@ func TestCommitRevision_ErrorCodes(t *testing.T) {
 	sum := putBlob(t, s, "r2")
 	unknown := uuid.Must(uuid.NewV7()).String()
 
+	other := createItem(t, s, c, "other").GetItem().GetHead()
+	another := createItem(t, s, c, "another").GetItem().GetHead()
+
 	tests := []struct {
 		name string
 		req  *apiv1alpha1.CommitRevisionRequest
 		want connect.Code
+		// field と reason は, want が INVALID_ARGUMENT の時に BadRequest で返すもの.
+		field, reason string
 	}{
-		{name: "親が重複している", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Parents: []string{r1, r1}, BlobSha256: sum}, want: connect.CodeInvalidArgument},
-		{name: "親の ID の形式でない", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Parents: []string{r1, "parent"}, BlobSha256: sum}, want: connect.CodeInvalidArgument},
-		{name: "存在しない revision を親にする", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Parents: []string{r1, unknown}, BlobSha256: sum}, want: connect.CodeNotFound},
-		{name: "存在しない item", req: &apiv1alpha1.CommitRevisionRequest{ItemId: unknown, ExpectedHead: r1, BlobSha256: sum}, want: connect.CodeNotFound},
-		{name: "blob が存在しない", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, BlobSha256: blobstore.Sum(sha256.Sum256([]byte("missing"))).String()}, want: connect.CodeFailedPrecondition},
+		{name: "item の ID の形式でない", req: &apiv1alpha1.CommitRevisionRequest{ItemId: "item", ExpectedHead: r1, Content: &apiv1alpha1.RevisionContent{BlobSha256: sum}}, want: connect.CodeInvalidArgument, field: "item_id", reason: "ID_MALFORMED"},
+		{name: "expected_head が空", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, Content: &apiv1alpha1.RevisionContent{BlobSha256: sum}}, want: connect.CodeInvalidArgument, field: "expected_head", reason: "ID_MALFORMED"},
+		{name: "親の ID の形式でない", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Parents: []string{r1, "parent"}, Content: &apiv1alpha1.RevisionContent{BlobSha256: sum}}, want: connect.CodeInvalidArgument, field: "parents[1]", reason: "ID_MALFORMED"},
+		{name: "SHA-256 が大文字", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Content: &apiv1alpha1.RevisionContent{BlobSha256: strings.ToUpper(sum)}}, want: connect.CodeInvalidArgument, field: "content.blob_sha256", reason: "BLOB_SHA256_MALFORMED"},
+		{name: "update_mask で SHA-256 を空にする", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, UpdateMask: mask("blob_sha256")}, want: connect.CodeInvalidArgument, field: "content.blob_sha256", reason: "BLOB_SHA256_REQUIRED"},
+		{name: "update_mask にワイルドカード", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Content: &apiv1alpha1.RevisionContent{BlobSha256: sum}, UpdateMask: mask("blob_sha256", "*")}, want: connect.CodeInvalidArgument, field: "update_mask.paths[1]", reason: "UPDATE_MASK_WILDCARD"},
+		{name: "update_mask に存在しないフィールド", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Content: &apiv1alpha1.RevisionContent{BlobSha256: sum}, UpdateMask: mask("name")}, want: connect.CodeInvalidArgument, field: "update_mask.paths[0]", reason: "UPDATE_MASK_FIELD_UNKNOWN"},
+		{name: "存在しない expected_head から引き継ぐ", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: unknown}, want: connect.CodeNotFound},
+		{name: "親が重複している", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Parents: []string{r1, r1}, Content: &apiv1alpha1.RevisionContent{BlobSha256: sum}}, want: connect.CodeInvalidArgument, field: "parents[1]", reason: "PARENTS_DUPLICATE"},
+		{name: "親が上限を超える", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Parents: []string{r1, other, another}, Content: &apiv1alpha1.RevisionContent{BlobSha256: sum}}, want: connect.CodeInvalidArgument, field: "parents", reason: "PARENTS_TOO_MANY"},
+		{name: "親に expected_head が含まれていない", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Parents: []string{other}, Content: &apiv1alpha1.RevisionContent{BlobSha256: sum}}, want: connect.CodeInvalidArgument, field: "parents", reason: "PARENTS_MISSING_EXPECTED_HEAD"},
+		{name: "存在しない revision を親にする", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Parents: []string{r1, unknown}, Content: &apiv1alpha1.RevisionContent{BlobSha256: sum}}, want: connect.CodeNotFound},
+		{name: "存在しない item", req: &apiv1alpha1.CommitRevisionRequest{ItemId: unknown, ExpectedHead: r1, Content: &apiv1alpha1.RevisionContent{BlobSha256: sum}}, want: connect.CodeNotFound},
+		{name: "blob が存在しない", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Content: &apiv1alpha1.RevisionContent{BlobSha256: blobstore.Sum(sha256.Sum256([]byte("missing"))).String()}}, want: connect.CodeFailedPrecondition},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := c.CommitRevision(ctx, connect.NewRequest(tt.req))
+			if tt.want == connect.CodeInvalidArgument {
+				wantViolation(t, "CommitRevision()", err, tt.field, tt.reason)
+				return
+			}
 			wantCode(t, "CommitRevision()", err, tt.want)
 		})
 	}

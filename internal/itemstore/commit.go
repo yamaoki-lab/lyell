@@ -49,7 +49,7 @@ type NewRevision struct {
 //
 // 早送りだけを受け付ける. 新しい revision は From (現在の head) の子孫でなければならない. head が From から動いていたら, 何も記録せずに *NotFastForwardError (ErrNotFastForward) を返す. 読み取ってから書き込むまでの間に他の書き込みが head を進めても, 一方だけが成功する.
 //
-// 引数が不正なら ErrInvalid を, item や親の revision が存在しなければ ErrNotFound を返す.
+// 引数が不正なら ErrInvalid を, item や親の revision が存在しなければ ErrNotFound を返す. 親の指定が不正な場合のエラーは *ParentsError 型で, errors.As で取り出せる.
 //
 // 中身のバイト列 (blob) は, CreateItem と同じく, 先に書き込んでから記録する. 拒否した時や記録に失敗した時は, 書き込んだ blob が孤立して残る. どこからも参照されない blob は無害で, 後の GC で回収できる.
 func (s *Store) CommitRevision(ctx context.Context, r NewRevision) (ID, error) {
@@ -132,20 +132,49 @@ func (s *Store) CommitRevision(ctx context.Context, r NewRevision) (ID, error) {
 // maxParents は, 1つの revision が持てる parents の数の上限. fast-forward の parents は1つ, 統合の parents は2つで, 3つ以上を一度に統合する操作は存在しない. 上限が無いと, 1回の CommitRevision で大量の parents を記録でき, その間は唯一の書き込み接続を占有し続ける.
 const maxParents = 2
 
+// ParentsProblem は, 親の指定がどの決まりに反したかを表す.
+type ParentsProblem int
+
+const (
+	// ParentsTooMany は, 親の数が上限を超えていること.
+	ParentsTooMany ParentsProblem = iota + 1
+	// ParentsDuplicate は, 同じ親が2回以上指定されていること.
+	ParentsDuplicate
+	// ParentsMissingFrom は, 親に前提の head (From) が含まれていないこと.
+	ParentsMissingFrom
+)
+
+// ParentsError は, CommitRevision で親の指定が不正だった時のエラー. errors.Is(err, ErrInvalid) は true になる. API で, どの親がどの決まりに反したかを呼び出し側に返すために使う.
+type ParentsError struct {
+	Problem ParentsProblem
+	// Index は, Problem が ParentsDuplicate の時, 重複した親のうち2つ目の位置 (NewRevision.Parents の添字). それ以外は -1.
+	Index  int
+	detail string
+}
+
+func (e *ParentsError) Error() string {
+	return fmt.Sprintf("%v: %s", ErrInvalid, e.detail)
+}
+
+// Is は, errors.Is(err, ErrInvalid) で true を返すようにする. ErrInvalid で判別する呼び出し側との互換性を保つため.
+func (e *ParentsError) Is(target error) bool {
+	return target == ErrInvalid
+}
+
 func validateParents(from ID, parents []ID) error {
 	// 親ごとに DB を参照する前に, 件数のみで拒否する.
 	if len(parents) > maxParents {
-		return fmt.Errorf("%w: parents が %d 個指定されています (%d 個以下である必要があります)", ErrInvalid, len(parents), maxParents)
+		return &ParentsError{Problem: ParentsTooMany, Index: -1, detail: fmt.Sprintf("parents が %d 個指定されています (%d 個以下である必要があります)", len(parents), maxParents)}
 	}
 	seen := make(map[ID]bool, len(parents))
-	for _, p := range parents {
+	for i, p := range parents {
 		if seen[p] {
-			return fmt.Errorf("%w: 親 %s が重複しています", ErrInvalid, p)
+			return &ParentsError{Problem: ParentsDuplicate, Index: i, detail: fmt.Sprintf("親 %s が重複しています", p)}
 		}
 		seen[p] = true
 	}
 	if !seen[from] {
-		return fmt.Errorf("%w: 親に前提の head %s が含まれていません. 早送り (fast-forward) になりません", ErrInvalid, from)
+		return &ParentsError{Problem: ParentsMissingFrom, Index: -1, detail: fmt.Sprintf("親に前提の head %s が含まれていません. 早送り (fast-forward) になりません", from)}
 	}
 	return nil
 }

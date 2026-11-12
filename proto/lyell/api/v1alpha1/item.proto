@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package lyell.api.v1alpha1;
 
+import "google/api/field_behavior.proto";
 import "google/protobuf/timestamp.proto";
 
 option go_package = "github.com/yamaoki-lab/lyell/gen/lyell/api/v1alpha1;apiv1alpha1";
@@ -41,13 +42,13 @@ message Revision {
 // RevisionContent は, revision の中身.
 message RevisionContent {
   // create_time は, revision を記録した時刻. ミリ秒より細かい部分は切り捨てる.
-  google.protobuf.Timestamp create_time = 1;
+  google.protobuf.Timestamp create_time = 1 [(google.api.field_behavior) = OUTPUT_ONLY];
   // author_user は, 記録した利用者. 認証を実装するまでは, サーバが "anonymous" を設定する.
-  string author_user = 2;
+  string author_user = 2 [(google.api.field_behavior) = OUTPUT_ONLY];
   // author_machine は, 記録したマシン. 認証を実装するまでは, サーバが "anonymous" を設定する.
-  string author_machine = 3;
+  string author_machine = 3 [(google.api.field_behavior) = OUTPUT_ONLY];
   // blob_sha256 は, 中身のバイト列 (blob) の SHA-256 を, 小文字の16進数64文字で表記したもの. バイト列は /lyell/api/v1alpha1/blobs/sha256/<blob_sha256> で読み取る.
   string blob_sha256 = 4;
   // blob_size は, 中身のバイト列のサイズ (バイト). ファイルシステムとして見せる時に, バイト列を取得せずにサイズを答えるため.
-  int64 blob_size = 5;
+  int64 blob_size = 5 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
