@@ -29,9 +29,9 @@ func (s *itemService) CreateItem(ctx context.Context, req *connect.Request[apiv1
 	if err != nil {
 		return nil, invalidArgument("kind", err)
 	}
-	sum, err := parseSum(req.Msg.GetBlobSha256())
+	sum, err := parseSum(req.Msg.GetContent().GetBlobSha256())
 	if err != nil {
-		return nil, invalidArgument("blob_sha256", err)
+		return nil, invalidArgument("content.blob_sha256", err)
 	}
 	item, err := s.items.CreateItem(ctx, itemstore.NewItem{Kind: kind, Content: newContent(ctx, sum)})
 	if err != nil {
@@ -85,9 +85,9 @@ func (s *itemService) CommitRevision(ctx context.Context, req *connect.Request[a
 		}
 		parents = append(parents, id)
 	}
-	sum, err := parseSum(req.Msg.GetBlobSha256())
+	sum, err := parseSum(req.Msg.GetContent().GetBlobSha256())
 	if err != nil {
-		return nil, invalidArgument("blob_sha256", err)
+		return nil, invalidArgument("content.blob_sha256", err)
 	}
 	revID, err := s.items.CommitRevision(ctx, itemstore.NewRevision{ItemID: itemID, From: from, Parents: parents, Content: newContent(ctx, sum)})
 	if err != nil {
@@ -201,8 +201,11 @@ func parseID(s string) (itemstore.ID, error) {
 	return itemstore.ID(u), nil
 }
 
-// parseSum は, 小文字の16進数64文字の SHA-256 を読み取る. blobstore.ParseSum は大文字も受け付けるが, blob の URL がキャッシュのキーになるので, 同じ blob に対して複数の表記を許可しない.
+// parseSum は, 小文字の16進数64文字の SHA-256 を読み取る. blobstore.ParseSum は大文字も受け付けるが, blob の URL がキャッシュのキーになるので, 同じ blob に対して複数の表記を許可しない. 入力が空なら, 必須フィールドの省略として拒否する.
 func parseSum(s string) (blobstore.Sum, error) {
+	if s == "" {
+		return blobstore.Sum{}, reject(apiv1alpha1.FieldViolationReason_FIELD_VIOLATION_REASON_BLOB_SHA256_REQUIRED, errors.New("中身の SHA-256 が指定されていません"))
+	}
 	const reason = apiv1alpha1.FieldViolationReason_FIELD_VIOLATION_REASON_BLOB_SHA256_MALFORMED
 	sum, err := blobstore.ParseSum(s)
 	if err != nil {

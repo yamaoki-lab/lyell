@@ -37,10 +37,13 @@ service ItemService {
 
 // CreateItemRequest は, CreateItem のリクエスト.
 message CreateItemRequest {
+  reserved 2;
+  reserved "blob_sha256";
+
   // kind は item の種類. 現在は ITEM_KIND_ASSET のみを受け付ける.
   ItemKind kind = 1;
-  // blob_sha256 は, 最初の revision の中身の SHA-256 (小文字の16進数64文字). 事前に保存しておく必要がある.
-  string blob_sha256 = 2;
+  // content は, 最初の revision の中身. blob_sha256 は必須で, blob を事前に保存しておく必要がある. blob_sha256 以外のフィールドは出力専用で, 設定しても無視する.
+  RevisionContent content = 3;
 }
 
 // CreateItemResponse は, CreateItem のレスポンス.
@@ -109,14 +112,17 @@ message GetRevisionResponse {
 
 // CommitRevisionRequest は, CommitRevision のリクエスト.
 message CommitRevisionRequest {
+  reserved 4;
+  reserved "blob_sha256";
+
   // item_id は, revision を追加する item の ID.
   string item_id = 1;
   // expected_head は, 呼び出し元が想定している現在の head. 現在の head と異なれば ABORTED を返す.
   string expected_head = 2;
   // parents は, 新しい revision の親となる revision の ID. 空なら expected_head のみを親にする (最も一般的な fast-forward). 指定する場合は expected_head を必ず含める. 現在の上限は2つで, 超えると INVALID_ARGUMENT を返す. 上限は今後引き上げる可能性がある.
   repeated string parents = 3;
-  // blob_sha256 は, 新しい revision の中身の SHA-256 (小文字の16進数64文字). 事前に保存しておく必要がある.
-  string blob_sha256 = 4;
+  // content は, 新しい revision の中身. blob_sha256 は必須で, blob を事前に保存しておく必要がある. blob_sha256 以外のフィールドは出力専用で, 設定しても無視する.
+  RevisionContent content = 5;
 }
 
 // CommitRevisionResponse は, CommitRevision のレスポンス.
@@ -159,4 +165,6 @@ enum FieldViolationReason {
   FIELD_VIOLATION_REASON_PAGE_TOKEN_MALFORMED = 10;
   // FIELD_VIOLATION_REASON_PAGE_TOKEN_MISMATCH は, page_token を next_page_token として返したリクエストと, filter または order_by が異なること.
   FIELD_VIOLATION_REASON_PAGE_TOKEN_MISMATCH = 11;
+  // FIELD_VIOLATION_REASON_BLOB_SHA256_REQUIRED は, 必須の blob_sha256 が空であること.
+  FIELD_VIOLATION_REASON_BLOB_SHA256_REQUIRED = 12;
 }

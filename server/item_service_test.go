@@ -58,7 +58,7 @@ func putBlob(t *testing.T, s *Server, data string) string {
 
 func createItem(t *testing.T, s *Server, c apiv1alpha1connect.ItemServiceClient, data string) *apiv1alpha1.CreateItemResponse {
 	t.Helper()
-	res, err := c.CreateItem(context.Background(), connect.NewRequest(&apiv1alpha1.CreateItemRequest{Kind: apiv1alpha1.ItemKind_ITEM_KIND_ASSET, BlobSha256: putBlob(t, s, data)}))
+	res, err := c.CreateItem(context.Background(), connect.NewRequest(&apiv1alpha1.CreateItemRequest{Kind: apiv1alpha1.ItemKind_ITEM_KIND_ASSET, Content: &apiv1alpha1.RevisionContent{BlobSha256: putBlob(t, s, data)}}))
 	if err != nil {
 		t.Fatalf("CreateItem() error = %v, want nil", err)
 	}
@@ -159,12 +159,14 @@ func TestCreateItem_RejectsBadRequest(t *testing.T) {
 		// field と reason は, want が INVALID_ARGUMENT の時に BadRequest で返すもの.
 		field, reason string
 	}{
-		{name: "種類が指定されていない", req: &apiv1alpha1.CreateItemRequest{BlobSha256: sum}, want: connect.CodeInvalidArgument, field: "kind", reason: "KIND_UNSPECIFIED"},
-		{name: "存在しない種類", req: &apiv1alpha1.CreateItemRequest{Kind: 99, BlobSha256: sum}, want: connect.CodeInvalidArgument, field: "kind", reason: "KIND_UNKNOWN"},
-		{name: "collection", req: &apiv1alpha1.CreateItemRequest{Kind: apiv1alpha1.ItemKind_ITEM_KIND_COLLECTION, BlobSha256: sum}, want: connect.CodeInvalidArgument, field: "kind", reason: "KIND_UNSUPPORTED"},
-		{name: "SHA-256 が大文字", req: &apiv1alpha1.CreateItemRequest{Kind: apiv1alpha1.ItemKind_ITEM_KIND_ASSET, BlobSha256: strings.ToUpper(sum)}, want: connect.CodeInvalidArgument, field: "blob_sha256", reason: "BLOB_SHA256_MALFORMED"},
-		{name: "SHA-256 が短い", req: &apiv1alpha1.CreateItemRequest{Kind: apiv1alpha1.ItemKind_ITEM_KIND_ASSET, BlobSha256: sum[:63]}, want: connect.CodeInvalidArgument, field: "blob_sha256", reason: "BLOB_SHA256_MALFORMED"},
-		{name: "blob が存在しない", req: &apiv1alpha1.CreateItemRequest{Kind: apiv1alpha1.ItemKind_ITEM_KIND_ASSET, BlobSha256: missing}, want: connect.CodeFailedPrecondition},
+		{name: "種類が指定されていない", req: &apiv1alpha1.CreateItemRequest{Content: &apiv1alpha1.RevisionContent{BlobSha256: sum}}, want: connect.CodeInvalidArgument, field: "kind", reason: "KIND_UNSPECIFIED"},
+		{name: "存在しない種類", req: &apiv1alpha1.CreateItemRequest{Kind: 99, Content: &apiv1alpha1.RevisionContent{BlobSha256: sum}}, want: connect.CodeInvalidArgument, field: "kind", reason: "KIND_UNKNOWN"},
+		{name: "collection", req: &apiv1alpha1.CreateItemRequest{Kind: apiv1alpha1.ItemKind_ITEM_KIND_COLLECTION, Content: &apiv1alpha1.RevisionContent{BlobSha256: sum}}, want: connect.CodeInvalidArgument, field: "kind", reason: "KIND_UNSUPPORTED"},
+		{name: "SHA-256 が大文字", req: &apiv1alpha1.CreateItemRequest{Kind: apiv1alpha1.ItemKind_ITEM_KIND_ASSET, Content: &apiv1alpha1.RevisionContent{BlobSha256: strings.ToUpper(sum)}}, want: connect.CodeInvalidArgument, field: "content.blob_sha256", reason: "BLOB_SHA256_MALFORMED"},
+		{name: "SHA-256 が短い", req: &apiv1alpha1.CreateItemRequest{Kind: apiv1alpha1.ItemKind_ITEM_KIND_ASSET, Content: &apiv1alpha1.RevisionContent{BlobSha256: sum[:63]}}, want: connect.CodeInvalidArgument, field: "content.blob_sha256", reason: "BLOB_SHA256_MALFORMED"},
+		{name: "SHA-256 が空", req: &apiv1alpha1.CreateItemRequest{Kind: apiv1alpha1.ItemKind_ITEM_KIND_ASSET, Content: &apiv1alpha1.RevisionContent{}}, want: connect.CodeInvalidArgument, field: "content.blob_sha256", reason: "BLOB_SHA256_REQUIRED"},
+		{name: "content が無い", req: &apiv1alpha1.CreateItemRequest{Kind: apiv1alpha1.ItemKind_ITEM_KIND_ASSET}, want: connect.CodeInvalidArgument, field: "content.blob_sha256", reason: "BLOB_SHA256_REQUIRED"},
+		{name: "blob が存在しない", req: &apiv1alpha1.CreateItemRequest{Kind: apiv1alpha1.ItemKind_ITEM_KIND_ASSET, Content: &apiv1alpha1.RevisionContent{BlobSha256: missing}}, want: connect.CodeFailedPrecondition},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -219,7 +221,7 @@ func TestCommitRevision_AdvancesHead(t *testing.T) {
 	r1 := created.GetItem().GetHead()
 
 	// parents を指定しなければ, expected_head だけが親になる.
-	res, err := c.CommitRevision(ctx, connect.NewRequest(&apiv1alpha1.CommitRevisionRequest{ItemId: created.GetItem().GetId(), ExpectedHead: r1, BlobSha256: putBlob(t, s, "r2")}))
+	res, err := c.CommitRevision(ctx, connect.NewRequest(&apiv1alpha1.CommitRevisionRequest{ItemId: created.GetItem().GetId(), ExpectedHead: r1, Content: &apiv1alpha1.RevisionContent{BlobSha256: putBlob(t, s, "r2")}}))
 	if err != nil {
 		t.Fatalf("CommitRevision() error = %v, want nil", err)
 	}
@@ -241,14 +243,14 @@ func TestCommitRevision_StaleHeadIsAbortedWithHeadMoved(t *testing.T) {
 	ctx := context.Background()
 	created := createItem(t, s, c, "r1")
 	itemID, r1 := created.GetItem().GetId(), created.GetItem().GetHead()
-	res, err := c.CommitRevision(ctx, connect.NewRequest(&apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, BlobSha256: putBlob(t, s, "r2")}))
+	res, err := c.CommitRevision(ctx, connect.NewRequest(&apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Content: &apiv1alpha1.RevisionContent{BlobSha256: putBlob(t, s, "r2")}}))
 	if err != nil {
 		t.Fatalf("CommitRevision() error = %v, want nil", err)
 	}
 	r2 := res.Msg.GetRevision().GetId()
 
 	// head は r2 に進んでいるが, 古い r1 を前提として追加しようとする.
-	_, err = c.CommitRevision(ctx, connect.NewRequest(&apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, BlobSha256: putBlob(t, s, "stale")}))
+	_, err = c.CommitRevision(ctx, connect.NewRequest(&apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Content: &apiv1alpha1.RevisionContent{BlobSha256: putBlob(t, s, "stale")}}))
 	wantCode(t, "古い head を前提とした CommitRevision()", err, connect.CodeAborted)
 
 	// 呼び出し側が読み直さずに現在の head を取得できるよう, 詳細に HeadMoved が付いている.
@@ -287,16 +289,17 @@ func TestCommitRevision_ErrorCodes(t *testing.T) {
 		// field と reason は, want が INVALID_ARGUMENT の時に BadRequest で返すもの.
 		field, reason string
 	}{
-		{name: "item の ID の形式でない", req: &apiv1alpha1.CommitRevisionRequest{ItemId: "item", ExpectedHead: r1, BlobSha256: sum}, want: connect.CodeInvalidArgument, field: "item_id", reason: "ID_MALFORMED"},
-		{name: "expected_head が空", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, BlobSha256: sum}, want: connect.CodeInvalidArgument, field: "expected_head", reason: "ID_MALFORMED"},
-		{name: "親の ID の形式でない", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Parents: []string{r1, "parent"}, BlobSha256: sum}, want: connect.CodeInvalidArgument, field: "parents[1]", reason: "ID_MALFORMED"},
-		{name: "SHA-256 が大文字", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, BlobSha256: strings.ToUpper(sum)}, want: connect.CodeInvalidArgument, field: "blob_sha256", reason: "BLOB_SHA256_MALFORMED"},
-		{name: "親が重複している", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Parents: []string{r1, r1}, BlobSha256: sum}, want: connect.CodeInvalidArgument, field: "parents[1]", reason: "PARENTS_DUPLICATE"},
-		{name: "親が上限を超える", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Parents: []string{r1, other, another}, BlobSha256: sum}, want: connect.CodeInvalidArgument, field: "parents", reason: "PARENTS_TOO_MANY"},
-		{name: "親に expected_head が含まれていない", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Parents: []string{other}, BlobSha256: sum}, want: connect.CodeInvalidArgument, field: "parents", reason: "PARENTS_MISSING_EXPECTED_HEAD"},
-		{name: "存在しない revision を親にする", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Parents: []string{r1, unknown}, BlobSha256: sum}, want: connect.CodeNotFound},
-		{name: "存在しない item", req: &apiv1alpha1.CommitRevisionRequest{ItemId: unknown, ExpectedHead: r1, BlobSha256: sum}, want: connect.CodeNotFound},
-		{name: "blob が存在しない", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, BlobSha256: blobstore.Sum(sha256.Sum256([]byte("missing"))).String()}, want: connect.CodeFailedPrecondition},
+		{name: "item の ID の形式でない", req: &apiv1alpha1.CommitRevisionRequest{ItemId: "item", ExpectedHead: r1, Content: &apiv1alpha1.RevisionContent{BlobSha256: sum}}, want: connect.CodeInvalidArgument, field: "item_id", reason: "ID_MALFORMED"},
+		{name: "expected_head が空", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, Content: &apiv1alpha1.RevisionContent{BlobSha256: sum}}, want: connect.CodeInvalidArgument, field: "expected_head", reason: "ID_MALFORMED"},
+		{name: "親の ID の形式でない", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Parents: []string{r1, "parent"}, Content: &apiv1alpha1.RevisionContent{BlobSha256: sum}}, want: connect.CodeInvalidArgument, field: "parents[1]", reason: "ID_MALFORMED"},
+		{name: "SHA-256 が大文字", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Content: &apiv1alpha1.RevisionContent{BlobSha256: strings.ToUpper(sum)}}, want: connect.CodeInvalidArgument, field: "content.blob_sha256", reason: "BLOB_SHA256_MALFORMED"},
+		{name: "content が無い", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1}, want: connect.CodeInvalidArgument, field: "content.blob_sha256", reason: "BLOB_SHA256_REQUIRED"},
+		{name: "親が重複している", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Parents: []string{r1, r1}, Content: &apiv1alpha1.RevisionContent{BlobSha256: sum}}, want: connect.CodeInvalidArgument, field: "parents[1]", reason: "PARENTS_DUPLICATE"},
+		{name: "親が上限を超える", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Parents: []string{r1, other, another}, Content: &apiv1alpha1.RevisionContent{BlobSha256: sum}}, want: connect.CodeInvalidArgument, field: "parents", reason: "PARENTS_TOO_MANY"},
+		{name: "親に expected_head が含まれていない", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Parents: []string{other}, Content: &apiv1alpha1.RevisionContent{BlobSha256: sum}}, want: connect.CodeInvalidArgument, field: "parents", reason: "PARENTS_MISSING_EXPECTED_HEAD"},
+		{name: "存在しない revision を親にする", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Parents: []string{r1, unknown}, Content: &apiv1alpha1.RevisionContent{BlobSha256: sum}}, want: connect.CodeNotFound},
+		{name: "存在しない item", req: &apiv1alpha1.CommitRevisionRequest{ItemId: unknown, ExpectedHead: r1, Content: &apiv1alpha1.RevisionContent{BlobSha256: sum}}, want: connect.CodeNotFound},
+		{name: "blob が存在しない", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Content: &apiv1alpha1.RevisionContent{BlobSha256: blobstore.Sum(sha256.Sum256([]byte("missing"))).String()}}, want: connect.CodeFailedPrecondition},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
