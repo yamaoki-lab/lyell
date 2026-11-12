@@ -85,9 +85,21 @@ func (s *itemService) CommitRevision(ctx context.Context, req *connect.Request[a
 		}
 		parents = append(parents, id)
 	}
-	sum, err := parseSum(req.Msg.GetContent().GetBlobSha256())
+	updated, err := updatedFields(req.Msg.GetUpdateMask(), req.Msg.GetContent())
 	if err != nil {
-		return nil, invalidArgument("content.blob_sha256", err)
+		return nil, err
+	}
+	var sum blobstore.Sum
+	if updated[blobSha256Field] {
+		if sum, err = parseSum(req.Msg.GetContent().GetBlobSha256()); err != nil {
+			return nil, invalidArgument("content.blob_sha256", err)
+		}
+	} else {
+		head, err := s.inheritedContent(ctx, itemID, from)
+		if err != nil {
+			return nil, err
+		}
+		sum = head.Blob
 	}
 	revID, err := s.items.CommitRevision(ctx, itemstore.NewRevision{ItemID: itemID, From: from, Parents: parents, Content: newContent(ctx, sum)})
 	if err != nil {
@@ -98,6 +110,26 @@ func (s *itemService) CommitRevision(ctx context.Context, req *connect.Request[a
 		return nil, s.connectError(ctx, err)
 	}
 	return connect.NewResponse(&apiv1alpha1.CommitRevisionResponse{Revision: revisionToProto(rev)}), nil
+}
+
+// inheritedContent は, CommitRevision で変更しないフィールドの引き継ぎ元として, expected_head の revision の中身を返す.
+// 間引かれていて引き継げない時, head が expected_head のままなら FAILED_PRECONDITION を返し, head が動いていれば早送りでない時と同じ ABORTED を返す. 間引かれるのは古い revision であることが多く, 古い expected_head を送った呼び出し側は, 現在の head を知って revision を作り直す必要があるため.
+func (s *itemService) inheritedContent(ctx context.Context, itemID, from itemstore.ID) (itemstore.Content, error) {
+	rev, err := s.items.Revision(ctx, from)
+	if err != nil {
+		return itemstore.Content{}, s.connectError(ctx, err)
+	}
+	if rev.Content != nil {
+		return *rev.Content, nil
+	}
+	item, err := s.items.Item(ctx, itemID)
+	if err != nil {
+		return itemstore.Content{}, s.connectError(ctx, err)
+	}
+	if item.Head != from {
+		return itemstore.Content{}, s.connectError(ctx, &itemstore.NotFastForwardError{ItemID: itemID, From: from, Head: item.Head})
+	}
+	return itemstore.Content{}, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("expected_head の revision %s は間引かれているため, 変更しないフィールドを引き継げません", from))
 }
 
 // newContent は, API から記録する revision の中身を作成する. 時刻と author はサーバが決め, 呼び出し側には指定させない. revision の body は, 形式 (lyell.storage.v1alpha1) を決めるまで空にする.

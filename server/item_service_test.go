@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/fieldmaskpb"
 
 	apiv1alpha1 "github.com/yamaoki-lab/lyell/gen/lyell/api/v1alpha1"
 	"github.com/yamaoki-lab/lyell/gen/lyell/api/v1alpha1/apiv1alpha1connect"
@@ -29,10 +31,15 @@ func newTestServer(t *testing.T) (*Server, apiv1alpha1connect.ItemServiceClient)
 	return s, apiv1alpha1connect.NewItemServiceClient(hs.Client(), hs.URL)
 }
 
-// startTestServer は, 一時ディレクトリに DB と blob の保存先を作成し, Register した mux で httptest のサーバを起動する.
+// startTestServer は, 一時ディレクトリで startTestServerIn を呼ぶ.
 func startTestServer(t *testing.T) (*Server, *httptest.Server) {
 	t.Helper()
-	dir := t.TempDir()
+	return startTestServerIn(t, t.TempDir())
+}
+
+// startTestServerIn は, dir に DB (lyell.db) と blob の保存先を作成し, Register した mux で httptest のサーバを起動する.
+func startTestServerIn(t *testing.T, dir string) (*Server, *httptest.Server) {
+	t.Helper()
 	s, err := Open(context.Background(), Config{DBPath: filepath.Join(dir, "lyell.db"), BlobDir: filepath.Join(dir, "blobs")})
 	if err != nil {
 		t.Fatalf("Open() error = %v, want nil", err)
@@ -271,6 +278,126 @@ func TestCommitRevision_StaleHeadIsAbortedWithHeadMoved(t *testing.T) {
 	}
 }
 
+// mask は, paths を持つ update_mask を返す.
+func mask(paths ...string) *fieldmaskpb.FieldMask {
+	return &fieldmaskpb.FieldMask{Paths: paths}
+}
+
+// commit は, CommitRevision を呼び, 追加した revision を返す.
+func commit(t *testing.T, c apiv1alpha1connect.ItemServiceClient, req *apiv1alpha1.CommitRevisionRequest) *apiv1alpha1.Revision {
+	t.Helper()
+	res, err := c.CommitRevision(context.Background(), connect.NewRequest(req))
+	if err != nil {
+		t.Fatalf("CommitRevision() error = %v, want nil", err)
+	}
+	return res.Msg.GetRevision()
+}
+
+func TestCommitRevision_UpdateMask(t *testing.T) {
+	s, c := newTestServer(t)
+	sum := putBlob(t, s, "r2")
+
+	tests := []struct {
+		name    string
+		content *apiv1alpha1.RevisionContent
+		mask    *fieldmaskpb.FieldMask
+		// changed は, blob_sha256 が content の値に変わるか. false なら expected_head の revision から引き継ぐ.
+		changed bool
+	}{
+		{name: "content も update_mask も無い", changed: false},
+		{name: "update_mask を省略して blob_sha256 を設定", content: &apiv1alpha1.RevisionContent{BlobSha256: sum}, changed: true},
+		{name: "空の update_mask は省略と同じ", content: &apiv1alpha1.RevisionContent{BlobSha256: sum}, mask: mask(), changed: true},
+		{name: "update_mask に blob_sha256", content: &apiv1alpha1.RevisionContent{BlobSha256: sum}, mask: mask("blob_sha256"), changed: true},
+		// update_mask を指定すると, それに含まれないフィールドは, content に値があっても変更しない.
+		{name: "update_mask に含まれない blob_sha256", content: &apiv1alpha1.RevisionContent{BlobSha256: sum}, mask: mask("create_time"), changed: false},
+		// 出力専用のフィールドは, content に値があっても, update_mask に指定しても無視する (AIP-203).
+		{name: "出力専用のフィールドだけを設定", content: &apiv1alpha1.RevisionContent{AuthorUser: "someone", BlobSize: 1}, changed: false},
+		{name: "update_mask に出力専用のフィールド", content: &apiv1alpha1.RevisionContent{AuthorUser: "someone", BlobSha256: sum}, mask: mask("author_user", "blob_sha256"), changed: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// 引き継いだのか変更したのかを blob で見分けるため, 行ごとに r2 と異なる blob の item から始める.
+			created := createItem(t, s, c, "r1")
+			r1 := created.GetRevision()
+			got := commit(t, c, &apiv1alpha1.CommitRevisionRequest{ItemId: created.GetItem().GetId(), ExpectedHead: r1.GetId(), Content: tt.content, UpdateMask: tt.mask})
+			want := r1.GetContent()
+			if tt.changed {
+				want = &apiv1alpha1.RevisionContent{BlobSha256: sum, BlobSize: int64(len("r2"))}
+			}
+			if gc := got.GetContent(); gc.GetBlobSha256() != want.GetBlobSha256() || gc.GetBlobSize() != want.GetBlobSize() {
+				t.Errorf("blob = %s (%d バイト), want %s (%d バイト)", gc.GetBlobSha256(), gc.GetBlobSize(), want.GetBlobSha256(), want.GetBlobSize())
+			}
+			if gc := got.GetContent(); gc.GetAuthorUser() != "anonymous" {
+				t.Errorf("author_user = %q, want server が設定する %q", gc.GetAuthorUser(), "anonymous")
+			}
+		})
+	}
+}
+
+// thinRevision は, DB を直接書き換えて, 指定した id の revision の中身を間引く. 間引く API はまだ無い.
+func thinRevision(t *testing.T, dbPath, id string) {
+	t.Helper()
+	// ドライバ (modernc.org/sqlite) は, itemstore が登録している.
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v, want nil", err)
+	}
+	defer func() { _ = db.Close() }()
+	rid := uuid.MustParse(id)
+	res, err := db.Exec("UPDATE revisions SET created_at = NULL, author_user = NULL, author_machine = NULL, blob_sha256 = NULL, blob_size = NULL, body = NULL WHERE id = ?", rid[:])
+	if err != nil {
+		t.Fatalf("revision %s を間引けません: %v", id, err)
+	}
+	if n, err := res.RowsAffected(); err != nil || n != 1 {
+		t.Fatalf("間引いた revision の数 = %d (%v), want 1", n, err)
+	}
+}
+
+func TestCommitRevision_ThinnedExpectedHead(t *testing.T) {
+	dir := t.TempDir()
+	s, hs := startTestServerIn(t, dir)
+	c := apiv1alpha1connect.NewItemServiceClient(hs.Client(), hs.URL)
+	ctx := context.Background()
+
+	t.Run("head のまま", func(t *testing.T) {
+		created := createItem(t, s, c, "head")
+		itemID, r1 := created.GetItem().GetId(), created.GetItem().GetHead()
+		thinRevision(t, filepath.Join(dir, "lyell.db"), r1)
+
+		// 変更しないフィールドがあると, 引き継ぎ元の中身が無いので記録できない.
+		_, err := c.CommitRevision(ctx, connect.NewRequest(&apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1}))
+		wantCode(t, "間引かれた head から引き継ぐ CommitRevision()", err, connect.CodeFailedPrecondition)
+		// 全て指定すれば, 引き継ぐものが無いので記録できる.
+		commit(t, c, &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Content: &apiv1alpha1.RevisionContent{BlobSha256: putBlob(t, s, "r2")}})
+	})
+
+	t.Run("head が動いている", func(t *testing.T) {
+		created := createItem(t, s, c, "stale")
+		itemID, r1 := created.GetItem().GetId(), created.GetItem().GetHead()
+		r2 := commit(t, c, &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Content: &apiv1alpha1.RevisionContent{BlobSha256: putBlob(t, s, "r2")}}).GetId()
+		thinRevision(t, filepath.Join(dir, "lyell.db"), r1)
+
+		// 古い expected_head が間引かれていても, 早送りでない時と同じく ABORTED と現在の head を返す.
+		_, err := c.CommitRevision(ctx, connect.NewRequest(&apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1}))
+		wantCode(t, "間引かれた古い head から引き継ぐ CommitRevision()", err, connect.CodeAborted)
+		var ce *connect.Error
+		if !errors.As(err, &ce) {
+			t.Fatalf("error = %T, want *connect.Error", err)
+		}
+		var moved *apiv1alpha1.HeadMoved
+		for _, d := range ce.Details() {
+			if v, err := d.Value(); err == nil {
+				if m, ok := v.(*apiv1alpha1.HeadMoved); ok {
+					moved = m
+				}
+			}
+		}
+		if moved.GetCurrentHead() != r2 {
+			t.Errorf("HeadMoved = %v, want current_head %s", moved, r2)
+		}
+	})
+}
+
 func TestCommitRevision_ErrorCodes(t *testing.T) {
 	s, c := newTestServer(t)
 	ctx := context.Background()
@@ -293,7 +420,10 @@ func TestCommitRevision_ErrorCodes(t *testing.T) {
 		{name: "expected_head が空", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, Content: &apiv1alpha1.RevisionContent{BlobSha256: sum}}, want: connect.CodeInvalidArgument, field: "expected_head", reason: "ID_MALFORMED"},
 		{name: "親の ID の形式でない", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Parents: []string{r1, "parent"}, Content: &apiv1alpha1.RevisionContent{BlobSha256: sum}}, want: connect.CodeInvalidArgument, field: "parents[1]", reason: "ID_MALFORMED"},
 		{name: "SHA-256 が大文字", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Content: &apiv1alpha1.RevisionContent{BlobSha256: strings.ToUpper(sum)}}, want: connect.CodeInvalidArgument, field: "content.blob_sha256", reason: "BLOB_SHA256_MALFORMED"},
-		{name: "content が無い", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1}, want: connect.CodeInvalidArgument, field: "content.blob_sha256", reason: "BLOB_SHA256_REQUIRED"},
+		{name: "update_mask で SHA-256 を空にする", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, UpdateMask: mask("blob_sha256")}, want: connect.CodeInvalidArgument, field: "content.blob_sha256", reason: "BLOB_SHA256_REQUIRED"},
+		{name: "update_mask にワイルドカード", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Content: &apiv1alpha1.RevisionContent{BlobSha256: sum}, UpdateMask: mask("blob_sha256", "*")}, want: connect.CodeInvalidArgument, field: "update_mask.paths[1]", reason: "UPDATE_MASK_WILDCARD"},
+		{name: "update_mask に存在しないフィールド", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Content: &apiv1alpha1.RevisionContent{BlobSha256: sum}, UpdateMask: mask("name")}, want: connect.CodeInvalidArgument, field: "update_mask.paths[0]", reason: "UPDATE_MASK_FIELD_UNKNOWN"},
+		{name: "存在しない expected_head から引き継ぐ", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: unknown}, want: connect.CodeNotFound},
 		{name: "親が重複している", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Parents: []string{r1, r1}, Content: &apiv1alpha1.RevisionContent{BlobSha256: sum}}, want: connect.CodeInvalidArgument, field: "parents[1]", reason: "PARENTS_DUPLICATE"},
 		{name: "親が上限を超える", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Parents: []string{r1, other, another}, Content: &apiv1alpha1.RevisionContent{BlobSha256: sum}}, want: connect.CodeInvalidArgument, field: "parents", reason: "PARENTS_TOO_MANY"},
 		{name: "親に expected_head が含まれていない", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Parents: []string{other}, Content: &apiv1alpha1.RevisionContent{BlobSha256: sum}}, want: connect.CodeInvalidArgument, field: "parents", reason: "PARENTS_MISSING_EXPECTED_HEAD"},

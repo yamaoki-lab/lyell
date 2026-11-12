@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package lyell.api.v1alpha1;
 
+import "google/protobuf/field_mask.proto";
 import "lyell/api/v1alpha1/item.proto";
 
 option go_package = "github.com/yamaoki-lab/lyell/gen/lyell/api/v1alpha1;apiv1alpha1";
@@ -31,7 +32,7 @@ service ItemService {
 
   // CommitRevision は, item に revision を追加し, item の head をその revision へ進める. fast-forward のみを受け付ける.
   // head が expected_head から変更されていたら, 何も記録せずに ABORTED を返し, 詳細情報に HeadMoved を付与する.
-  // blob が存在しなければ, FAILED_PRECONDITION を返す.
+  // blob が存在しなければ, FAILED_PRECONDITION を返す. 引き継ぎ元となる expected_head の revision が間引かれていても, FAILED_PRECONDITION を返す.
   rpc CommitRevision(CommitRevisionRequest) returns (CommitRevisionResponse);
 }
 
@@ -121,8 +122,11 @@ message CommitRevisionRequest {
   string expected_head = 2;
   // parents は, 新しい revision の親となる revision の ID. 空なら expected_head のみを親にする (最も一般的な fast-forward). 指定する場合は expected_head を必ず含める. 現在の上限は2つで, 超えると INVALID_ARGUMENT を返す. 上限は今後引き上げる可能性がある.
   repeated string parents = 3;
-  // content は, 新しい revision の中身. blob_sha256 は必須で, blob を事前に保存しておく必要がある. blob_sha256 以外のフィールドは出力専用で, 設定しても無視する.
+  // content は, 新しい revision の中身. update_mask で変更の対象にしなかったフィールドは, expected_head の revision から引き継ぐ. blob_sha256 を変更する場合は, blob を事前に保存しておく必要がある. 出力専用のフィールドは, 設定しても無視する.
   RevisionContent content = 5;
+  // update_mask は, content のうち変更するフィールド (AIP-134). パスには content 内のフィールド名 (例: blob_sha256) を指定する. 省略するか空の場合は, content で値が設定されているフィールドを変更する.
+  // 値を空にしたフィールドを指定すると, そのフィールドを消去する. ただし blob_sha256 は消去できず, INVALID_ARGUMENT になる. ワイルドカード "*" や存在しないフィールド名も INVALID_ARGUMENT になる. 出力専用のフィールドは, 指定しても無視する.
+  google.protobuf.FieldMask update_mask = 6;
 }
 
 // CommitRevisionResponse は, CommitRevision のレスポンス.
@@ -165,6 +169,10 @@ enum FieldViolationReason {
   FIELD_VIOLATION_REASON_PAGE_TOKEN_MALFORMED = 10;
   // FIELD_VIOLATION_REASON_PAGE_TOKEN_MISMATCH は, page_token を next_page_token として返したリクエストと, filter または order_by が異なること.
   FIELD_VIOLATION_REASON_PAGE_TOKEN_MISMATCH = 11;
-  // FIELD_VIOLATION_REASON_BLOB_SHA256_REQUIRED は, 必須の blob_sha256 が空であること.
+  // FIELD_VIOLATION_REASON_BLOB_SHA256_REQUIRED は, 必須の blob_sha256 が空であること. CommitRevision では, update_mask に blob_sha256 を指定して値を空にした場合.
   FIELD_VIOLATION_REASON_BLOB_SHA256_REQUIRED = 12;
+  // FIELD_VIOLATION_REASON_UPDATE_MASK_WILDCARD は, update_mask にワイルドカード "*" が指定されていること. field は update_mask.paths[i].
+  FIELD_VIOLATION_REASON_UPDATE_MASK_WILDCARD = 13;
+  // FIELD_VIOLATION_REASON_UPDATE_MASK_FIELD_UNKNOWN は, update_mask のパスが content に存在しないフィールドを指していること. field は update_mask.paths[i].
+  FIELD_VIOLATION_REASON_UPDATE_MASK_FIELD_UNKNOWN = 14;
 }

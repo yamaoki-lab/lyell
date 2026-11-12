@@ -59,7 +59,7 @@ type ItemServiceClient interface {
 	GetRevision(context.Context, *connect.Request[v1alpha1.GetRevisionRequest]) (*connect.Response[v1alpha1.GetRevisionResponse], error)
 	// CommitRevision は, item に revision を追加し, item の head をその revision へ進める. fast-forward のみを受け付ける.
 	// head が expected_head から変更されていたら, 何も記録せずに ABORTED を返し, 詳細情報に HeadMoved を付与する.
-	// blob が存在しなければ, FAILED_PRECONDITION を返す.
+	// blob が存在しなければ, FAILED_PRECONDITION を返す. 引き継ぎ元となる expected_head の revision が間引かれていても, FAILED_PRECONDITION を返す.
 	CommitRevision(context.Context, *connect.Request[v1alpha1.CommitRevisionRequest]) (*connect.Response[v1alpha1.CommitRevisionResponse], error)
 }
 
@@ -157,7 +157,7 @@ type ItemServiceHandler interface {
 	GetRevision(context.Context, *connect.Request[v1alpha1.GetRevisionRequest]) (*connect.Response[v1alpha1.GetRevisionResponse], error)
 	// CommitRevision は, item に revision を追加し, item の head をその revision へ進める. fast-forward のみを受け付ける.
 	// head が expected_head から変更されていたら, 何も記録せずに ABORTED を返し, 詳細情報に HeadMoved を付与する.
-	// blob が存在しなければ, FAILED_PRECONDITION を返す.
+	// blob が存在しなければ, FAILED_PRECONDITION を返す. 引き継ぎ元となる expected_head の revision が間引かれていても, FAILED_PRECONDITION を返す.
 	CommitRevision(context.Context, *connect.Request[v1alpha1.CommitRevisionRequest]) (*connect.Response[v1alpha1.CommitRevisionResponse], error)
 }
 
