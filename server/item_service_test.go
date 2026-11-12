@@ -7,12 +7,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/protobuf/proto"
 
 	apiv1alpha1 "github.com/yamaoki-lab/lyell/gen/lyell/api/v1alpha1"
@@ -70,6 +72,41 @@ func wantCode(t *testing.T, name string, err error, want connect.Code) {
 	}
 }
 
+// wantViolation は, err が INVALID_ARGUMENT で, 詳細情報の BadRequest に, field と reason の組が1つだけ入っていることを確かめる. reason が空なら, reason が設定されていないことを確かめる.
+func wantViolation(t *testing.T, name string, err error, field, reason string) {
+	t.Helper()
+	wantCode(t, name, err, connect.CodeInvalidArgument)
+	var ce *connect.Error
+	if !errors.As(err, &ce) {
+		return
+	}
+	var got []*errdetails.BadRequest_FieldViolation
+	for _, d := range ce.Details() {
+		if v, err := d.Value(); err == nil {
+			if br, ok := v.(*errdetails.BadRequest); ok {
+				got = append(got, br.GetFieldViolations()...)
+			}
+		}
+	}
+	if len(got) != 1 || got[0].GetField() != field || got[0].GetReason() != reason || got[0].GetDescription() == "" {
+		t.Errorf("%s の BadRequest = %v, want field %q, reason %q と空でない description の1件", name, got, field, reason)
+	}
+}
+
+func TestFieldViolationReason_Names(t *testing.T) {
+	// 値の名前から接頭辞を除いた reason は, google.rpc.BadRequest の決まり (63文字以下の UPPER_SNAKE_CASE) を満たす必要がある.
+	valid := regexp.MustCompile(`^[A-Z][A-Z0-9_]+[A-Z0-9]$`)
+	for n, name := range apiv1alpha1.FieldViolationReason_name {
+		if n == 0 {
+			continue
+		}
+		got := reasonName(apiv1alpha1.FieldViolationReason(n))
+		if !strings.HasPrefix(name, reasonPrefix) || len(got) > 63 || !valid.MatchString(got) {
+			t.Errorf("%s の reason = %q, want %s で始まる名前から接頭辞を除いた, 63文字以下の UPPER_SNAKE_CASE", name, got, reasonPrefix)
+		}
+	}
+}
+
 func TestCreateItem_RecordsServerSideFields(t *testing.T) {
 	s, c := newTestServer(t)
 	ctx := context.Background()
@@ -119,16 +156,23 @@ func TestCreateItem_RejectsBadRequest(t *testing.T) {
 		name string
 		req  *apiv1alpha1.CreateItemRequest
 		want connect.Code
+		// field と reason は, want が INVALID_ARGUMENT の時に BadRequest で返すもの.
+		field, reason string
 	}{
-		{name: "種類が指定されていない", req: &apiv1alpha1.CreateItemRequest{BlobSha256: sum}, want: connect.CodeInvalidArgument},
-		{name: "collection", req: &apiv1alpha1.CreateItemRequest{Kind: apiv1alpha1.ItemKind_ITEM_KIND_COLLECTION, BlobSha256: sum}, want: connect.CodeInvalidArgument},
-		{name: "SHA-256 が大文字", req: &apiv1alpha1.CreateItemRequest{Kind: apiv1alpha1.ItemKind_ITEM_KIND_ASSET, BlobSha256: strings.ToUpper(sum)}, want: connect.CodeInvalidArgument},
-		{name: "SHA-256 が短い", req: &apiv1alpha1.CreateItemRequest{Kind: apiv1alpha1.ItemKind_ITEM_KIND_ASSET, BlobSha256: sum[:63]}, want: connect.CodeInvalidArgument},
+		{name: "種類が指定されていない", req: &apiv1alpha1.CreateItemRequest{BlobSha256: sum}, want: connect.CodeInvalidArgument, field: "kind", reason: "KIND_UNSPECIFIED"},
+		{name: "存在しない種類", req: &apiv1alpha1.CreateItemRequest{Kind: 99, BlobSha256: sum}, want: connect.CodeInvalidArgument, field: "kind", reason: "KIND_UNKNOWN"},
+		{name: "collection", req: &apiv1alpha1.CreateItemRequest{Kind: apiv1alpha1.ItemKind_ITEM_KIND_COLLECTION, BlobSha256: sum}, want: connect.CodeInvalidArgument, field: "kind", reason: "KIND_UNSUPPORTED"},
+		{name: "SHA-256 が大文字", req: &apiv1alpha1.CreateItemRequest{Kind: apiv1alpha1.ItemKind_ITEM_KIND_ASSET, BlobSha256: strings.ToUpper(sum)}, want: connect.CodeInvalidArgument, field: "blob_sha256", reason: "BLOB_SHA256_MALFORMED"},
+		{name: "SHA-256 が短い", req: &apiv1alpha1.CreateItemRequest{Kind: apiv1alpha1.ItemKind_ITEM_KIND_ASSET, BlobSha256: sum[:63]}, want: connect.CodeInvalidArgument, field: "blob_sha256", reason: "BLOB_SHA256_MALFORMED"},
 		{name: "blob が存在しない", req: &apiv1alpha1.CreateItemRequest{Kind: apiv1alpha1.ItemKind_ITEM_KIND_ASSET, BlobSha256: missing}, want: connect.CodeFailedPrecondition},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := c.CreateItem(ctx, connect.NewRequest(tt.req))
+			if tt.want == connect.CodeInvalidArgument {
+				wantViolation(t, "CreateItem()", err, tt.field, tt.reason)
+				return
+			}
 			wantCode(t, "CreateItem()", err, tt.want)
 		})
 	}
@@ -145,6 +189,7 @@ func TestGet_RejectsUnknownAndMalformedID(t *testing.T) {
 		want connect.Code
 	}{
 		{name: "存在しない", id: unknown.String(), want: connect.CodeNotFound},
+		{name: "空", id: "", want: connect.CodeInvalidArgument},
 		{name: "ID の形式でない", id: "item", want: connect.CodeInvalidArgument},
 		// uuid.Parse は受け付けるが, API の表記ではない.
 		{name: "波括弧付き", id: "{" + unknown.String() + "}", want: connect.CodeInvalidArgument},
@@ -155,9 +200,14 @@ func TestGet_RejectsUnknownAndMalformedID(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := c.GetItem(ctx, connect.NewRequest(&apiv1alpha1.GetItemRequest{Id: tt.id}))
+			_, rerr := c.GetRevision(ctx, connect.NewRequest(&apiv1alpha1.GetRevisionRequest{Id: tt.id}))
+			if tt.want == connect.CodeInvalidArgument {
+				wantViolation(t, "GetItem()", err, "id", "ID_MALFORMED")
+				wantViolation(t, "GetRevision()", rerr, "id", "ID_MALFORMED")
+				return
+			}
 			wantCode(t, "GetItem()", err, tt.want)
-			_, err = c.GetRevision(ctx, connect.NewRequest(&apiv1alpha1.GetRevisionRequest{Id: tt.id}))
-			wantCode(t, "GetRevision()", err, tt.want)
+			wantCode(t, "GetRevision()", rerr, tt.want)
 		})
 	}
 }
@@ -227,13 +277,23 @@ func TestCommitRevision_ErrorCodes(t *testing.T) {
 	sum := putBlob(t, s, "r2")
 	unknown := uuid.Must(uuid.NewV7()).String()
 
+	other := createItem(t, s, c, "other").GetItem().GetHead()
+	another := createItem(t, s, c, "another").GetItem().GetHead()
+
 	tests := []struct {
 		name string
 		req  *apiv1alpha1.CommitRevisionRequest
 		want connect.Code
+		// field と reason は, want が INVALID_ARGUMENT の時に BadRequest で返すもの.
+		field, reason string
 	}{
-		{name: "親が重複している", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Parents: []string{r1, r1}, BlobSha256: sum}, want: connect.CodeInvalidArgument},
-		{name: "親の ID の形式でない", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Parents: []string{r1, "parent"}, BlobSha256: sum}, want: connect.CodeInvalidArgument},
+		{name: "item の ID の形式でない", req: &apiv1alpha1.CommitRevisionRequest{ItemId: "item", ExpectedHead: r1, BlobSha256: sum}, want: connect.CodeInvalidArgument, field: "item_id", reason: "ID_MALFORMED"},
+		{name: "expected_head が空", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, BlobSha256: sum}, want: connect.CodeInvalidArgument, field: "expected_head", reason: "ID_MALFORMED"},
+		{name: "親の ID の形式でない", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Parents: []string{r1, "parent"}, BlobSha256: sum}, want: connect.CodeInvalidArgument, field: "parents[1]", reason: "ID_MALFORMED"},
+		{name: "SHA-256 が大文字", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, BlobSha256: strings.ToUpper(sum)}, want: connect.CodeInvalidArgument, field: "blob_sha256", reason: "BLOB_SHA256_MALFORMED"},
+		{name: "親が重複している", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Parents: []string{r1, r1}, BlobSha256: sum}, want: connect.CodeInvalidArgument, field: "parents[1]", reason: "PARENTS_DUPLICATE"},
+		{name: "親が上限を超える", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Parents: []string{r1, other, another}, BlobSha256: sum}, want: connect.CodeInvalidArgument, field: "parents", reason: "PARENTS_TOO_MANY"},
+		{name: "親に expected_head が含まれていない", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Parents: []string{other}, BlobSha256: sum}, want: connect.CodeInvalidArgument, field: "parents", reason: "PARENTS_MISSING_EXPECTED_HEAD"},
 		{name: "存在しない revision を親にする", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Parents: []string{r1, unknown}, BlobSha256: sum}, want: connect.CodeNotFound},
 		{name: "存在しない item", req: &apiv1alpha1.CommitRevisionRequest{ItemId: unknown, ExpectedHead: r1, BlobSha256: sum}, want: connect.CodeNotFound},
 		{name: "blob が存在しない", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, BlobSha256: blobstore.Sum(sha256.Sum256([]byte("missing"))).String()}, want: connect.CodeFailedPrecondition},
@@ -241,6 +301,10 @@ func TestCommitRevision_ErrorCodes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := c.CommitRevision(ctx, connect.NewRequest(tt.req))
+			if tt.want == connect.CodeInvalidArgument {
+				wantViolation(t, "CommitRevision()", err, tt.field, tt.reason)
+				return
+			}
 			wantCode(t, "CommitRevision()", err, tt.want)
 		})
 	}

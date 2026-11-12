@@ -130,3 +130,33 @@ message HeadMoved {
   // current_head は, リクエストが拒否された時点の item の head.
   string current_head = 1;
 }
+
+// FieldViolationReason は, ItemService が INVALID_ARGUMENT を返す時の拒否の理由.
+// INVALID_ARGUMENT には詳細情報として google.rpc.BadRequest (AIP-193) を付与する. field_violations の field はリクエスト内のフィールドのパス (例: content.blob_sha256, parents[1]. 添字は0から数える), reason は値の名前から接頭辞 FIELD_VIOLATION_REASON_ を除いたもの (例: ID_MALFORMED), description は日本語の説明.
+// クライアントは reason で理由を判別し, 独自のメッセージを表示できる. filter と order_by の拒否には, まだ reason を設定しない.
+enum FieldViolationReason {
+  // FIELD_VIOLATION_REASON_UNSPECIFIED は使用しない.
+  FIELD_VIOLATION_REASON_UNSPECIFIED = 0;
+  // FIELD_VIOLATION_REASON_ID_MALFORMED は, ID が応答で返す表記 (小文字でハイフン区切りの36文字) ではないこと. 空の場合も含む.
+  FIELD_VIOLATION_REASON_ID_MALFORMED = 1;
+  // FIELD_VIOLATION_REASON_BLOB_SHA256_MALFORMED は, SHA-256 が小文字の16進数64文字ではないこと.
+  FIELD_VIOLATION_REASON_BLOB_SHA256_MALFORMED = 2;
+  // FIELD_VIOLATION_REASON_KIND_UNSPECIFIED は, item の種類が指定されていないこと.
+  FIELD_VIOLATION_REASON_KIND_UNSPECIFIED = 3;
+  // FIELD_VIOLATION_REASON_KIND_UNKNOWN は, item の種類が ItemKind に存在しない値であること.
+  FIELD_VIOLATION_REASON_KIND_UNKNOWN = 4;
+  // FIELD_VIOLATION_REASON_KIND_UNSUPPORTED は, item の種類は ItemKind に存在するが, まだ作成できないこと (ITEM_KIND_COLLECTION).
+  FIELD_VIOLATION_REASON_KIND_UNSUPPORTED = 5;
+  // FIELD_VIOLATION_REASON_PARENTS_TOO_MANY は, parents の数が上限を超えていること.
+  FIELD_VIOLATION_REASON_PARENTS_TOO_MANY = 6;
+  // FIELD_VIOLATION_REASON_PARENTS_DUPLICATE は, 同じ親が2回以上指定されていること. field は2つ目の親を指す.
+  FIELD_VIOLATION_REASON_PARENTS_DUPLICATE = 7;
+  // FIELD_VIOLATION_REASON_PARENTS_MISSING_EXPECTED_HEAD は, parents に expected_head が含まれていないこと.
+  FIELD_VIOLATION_REASON_PARENTS_MISSING_EXPECTED_HEAD = 8;
+  // FIELD_VIOLATION_REASON_PAGE_SIZE_NEGATIVE は, page_size が負の値であること.
+  FIELD_VIOLATION_REASON_PAGE_SIZE_NEGATIVE = 9;
+  // FIELD_VIOLATION_REASON_PAGE_TOKEN_MALFORMED は, page_token が, ListItems の返した next_page_token の形式ではないこと.
+  FIELD_VIOLATION_REASON_PAGE_TOKEN_MALFORMED = 10;
+  // FIELD_VIOLATION_REASON_PAGE_TOKEN_MISMATCH は, page_token を next_page_token として返したリクエストと, filter または order_by が異なること.
+  FIELD_VIOLATION_REASON_PAGE_TOKEN_MISMATCH = 11;
+}
