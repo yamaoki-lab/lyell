@@ -3,7 +3,10 @@ package server
 import (
 	"errors"
 	"fmt"
+	"slices"
 
+	"google.golang.org/genproto/googleapis/api/annotations"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
 
@@ -39,4 +42,23 @@ func updatedFields(mask *fieldmaskpb.FieldMask, content *apiv1alpha1.RevisionCon
 		updated[p] = true
 	}
 	return updated, nil
+}
+
+// sameInput は, a と b が, 出力専用でないすべてのフィールドで等しいかを返す. 出力専用のフィールド (記録した時刻等) は revision ごとに server が決めるので, 比べない.
+func sameInput(a, b *apiv1alpha1.RevisionContent) bool {
+	ma, mb := a.ProtoReflect(), b.ProtoReflect()
+	fields := ma.Descriptor().Fields()
+	for i := range fields.Len() {
+		fd := fields.Get(i)
+		if !outputOnly(fd) && !ma.Get(fd).Equal(mb.Get(fd)) {
+			return false
+		}
+	}
+	return true
+}
+
+// outputOnly は, fd に google.api.field_behavior の OUTPUT_ONLY が付いているかを返す.
+func outputOnly(fd protoreflect.FieldDescriptor) bool {
+	behaviors, _ := proto.GetExtension(fd.Options(), annotations.E_FieldBehavior).([]annotations.FieldBehavior)
+	return slices.Contains(behaviors, annotations.FieldBehavior_OUTPUT_ONLY)
 }

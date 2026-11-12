@@ -58,6 +58,8 @@ const (
 	FieldViolationReason_FIELD_VIOLATION_REASON_UPDATE_MASK_WILDCARD FieldViolationReason = 13
 	// FIELD_VIOLATION_REASON_UPDATE_MASK_FIELD_UNKNOWN は, update_mask のパスが content に存在しないフィールドを指していること. field は update_mask.paths[i].
 	FieldViolationReason_FIELD_VIOLATION_REASON_UPDATE_MASK_FIELD_UNKNOWN FieldViolationReason = 14
+	// FIELD_VIOLATION_REASON_REVISION_UNCHANGED は, 親が1つの revision の content が, 出力専用のフィールドを除いて expected_head の revision と同じであること. field は content. 親が2つ (統合) なら, 同じでも受け付ける.
+	FieldViolationReason_FIELD_VIOLATION_REASON_REVISION_UNCHANGED FieldViolationReason = 15
 )
 
 // Enum value maps for FieldViolationReason.
@@ -78,6 +80,7 @@ var (
 		12: "FIELD_VIOLATION_REASON_BLOB_SHA256_REQUIRED",
 		13: "FIELD_VIOLATION_REASON_UPDATE_MASK_WILDCARD",
 		14: "FIELD_VIOLATION_REASON_UPDATE_MASK_FIELD_UNKNOWN",
+		15: "FIELD_VIOLATION_REASON_REVISION_UNCHANGED",
 	}
 	FieldViolationReason_value = map[string]int32{
 		"FIELD_VIOLATION_REASON_UNSPECIFIED":                   0,
@@ -95,6 +98,7 @@ var (
 		"FIELD_VIOLATION_REASON_BLOB_SHA256_REQUIRED":          12,
 		"FIELD_VIOLATION_REASON_UPDATE_MASK_WILDCARD":          13,
 		"FIELD_VIOLATION_REASON_UPDATE_MASK_FIELD_UNKNOWN":     14,
+		"FIELD_VIOLATION_REASON_REVISION_UNCHANGED":            15,
 	}
 )
 
@@ -831,7 +835,7 @@ const file_lyell_api_v1alpha1_item_service_proto_rawDesc = "" +
 	"\x16CommitRevisionResponse\x128\n" +
 	"\brevision\x18\x01 \x01(\v2\x1c.lyell.api.v1alpha1.RevisionR\brevision\".\n" +
 	"\tHeadMoved\x12!\n" +
-	"\fcurrent_head\x18\x01 \x01(\tR\vcurrentHead*\xd9\x05\n" +
+	"\fcurrent_head\x18\x01 \x01(\tR\vcurrentHead*\x88\x06\n" +
 	"\x14FieldViolationReason\x12&\n" +
 	"\"FIELD_VIOLATION_REASON_UNSPECIFIED\x10\x00\x12'\n" +
 	"#FIELD_VIOLATION_REASON_ID_MALFORMED\x10\x01\x120\n" +
@@ -848,7 +852,8 @@ const file_lyell_api_v1alpha1_item_service_proto_rawDesc = "" +
 	"*FIELD_VIOLATION_REASON_PAGE_TOKEN_MISMATCH\x10\v\x12/\n" +
 	"+FIELD_VIOLATION_REASON_BLOB_SHA256_REQUIRED\x10\f\x12/\n" +
 	"+FIELD_VIOLATION_REASON_UPDATE_MASK_WILDCARD\x10\r\x124\n" +
-	"0FIELD_VIOLATION_REASON_UPDATE_MASK_FIELD_UNKNOWN\x10\x0e2\xf0\x03\n" +
+	"0FIELD_VIOLATION_REASON_UPDATE_MASK_FIELD_UNKNOWN\x10\x0e\x12-\n" +
+	")FIELD_VIOLATION_REASON_REVISION_UNCHANGED\x10\x0f2\xf0\x03\n" +
 	"\vItemService\x12[\n" +
 	"\n" +
 	"CreateItem\x12%.lyell.api.v1alpha1.CreateItemRequest\x1a&.lyell.api.v1alpha1.CreateItemResponse\x12W\n" +

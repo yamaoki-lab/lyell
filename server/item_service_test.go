@@ -296,6 +296,8 @@ func commit(t *testing.T, c apiv1alpha1connect.ItemServiceClient, req *apiv1alph
 func TestCommitRevision_UpdateMask(t *testing.T) {
 	s, c := newTestServer(t)
 	sum := putBlob(t, s, "r2")
+	// 変化のない revision は統合でしか記録できないので, 別の item の head とも統合して, 引き継いだ結果を確かめる.
+	other := createItem(t, s, c, "other").GetItem().GetHead()
 
 	tests := []struct {
 		name    string
@@ -319,7 +321,7 @@ func TestCommitRevision_UpdateMask(t *testing.T) {
 			// 引き継いだのか変更したのかを blob で見分けるため, 行ごとに r2 と異なる blob の item から始める.
 			created := createItem(t, s, c, "r1")
 			r1 := created.GetRevision()
-			got := commit(t, c, &apiv1alpha1.CommitRevisionRequest{ItemId: created.GetItem().GetId(), ExpectedHead: r1.GetId(), Content: tt.content, UpdateMask: tt.mask})
+			got := commit(t, c, &apiv1alpha1.CommitRevisionRequest{ItemId: created.GetItem().GetId(), ExpectedHead: r1.GetId(), Parents: []string{r1.GetId(), other}, Content: tt.content, UpdateMask: tt.mask})
 			want := r1.GetContent()
 			if tt.changed {
 				want = &apiv1alpha1.RevisionContent{BlobSha256: sum, BlobSize: int64(len("r2"))}
@@ -332,6 +334,41 @@ func TestCommitRevision_UpdateMask(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCommitRevision_RejectsUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	s, hs := startTestServerIn(t, dir)
+	c := apiv1alpha1connect.NewItemServiceClient(hs.Client(), hs.URL)
+	ctx := context.Background()
+	created := createItem(t, s, c, "r1")
+	itemID, r1 := created.GetItem().GetId(), created.GetRevision()
+	same := r1.GetContent().GetBlobSha256()
+	other := createItem(t, s, c, "other").GetItem().GetHead()
+
+	tests := []struct {
+		name string
+		req  *apiv1alpha1.CommitRevisionRequest
+	}{
+		{name: "すべて引き継ぐ", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1.GetId()}},
+		{name: "同じ blob_sha256", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1.GetId(), Content: &apiv1alpha1.RevisionContent{BlobSha256: same}}},
+		{name: "parents に expected_head だけ", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1.GetId(), Parents: []string{r1.GetId()}}},
+		// 出力専用のフィールドは比べないので, 値が異なっても変化とみなさない.
+		{name: "出力専用のフィールドだけが異なる", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1.GetId(), Content: &apiv1alpha1.RevisionContent{AuthorUser: "someone", BlobSha256: same, BlobSize: 1}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := c.CommitRevision(ctx, connect.NewRequest(tt.req))
+			wantViolation(t, "CommitRevision()", err, "content", "REVISION_UNCHANGED")
+		})
+	}
+
+	// 統合は, 中身が変わらなくても2つの履歴をまとめた記録なので受け付ける.
+	merged := commit(t, c, &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1.GetId(), Parents: []string{r1.GetId(), other}})
+
+	// 間引かれていて比べられなければ, 変わったものとして記録する.
+	thinRevision(t, filepath.Join(dir, "lyell.db"), merged.GetId())
+	commit(t, c, &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: merged.GetId(), Content: &apiv1alpha1.RevisionContent{BlobSha256: same}})
 }
 
 // thinRevision は, DB を直接書き換えて, 指定した id の revision の中身を間引く. 間引く API はまだ無い.

@@ -90,16 +90,26 @@ func (s *itemService) CommitRevision(ctx context.Context, req *connect.Request[a
 		return nil, err
 	}
 	var sum blobstore.Sum
-	if updated[blobSha256Field] {
+	inherit := !updated[blobSha256Field]
+	if !inherit {
 		if sum, err = parseSum(req.Msg.GetContent().GetBlobSha256()); err != nil {
 			return nil, invalidArgument("content.blob_sha256", err)
 		}
-	} else {
-		head, err := s.inheritedContent(ctx, itemID, from)
-		if err != nil {
+	}
+	// 統合でなければ, 中身が変わったかを expected_head の中身と比べるので, 引き継がない時も読む.
+	merge := len(parents) > 1
+	var head *itemstore.Content
+	if inherit || !merge {
+		if head, err = s.expectedHeadContent(ctx, itemID, from, inherit); err != nil {
 			return nil, err
 		}
+	}
+	if inherit {
 		sum = head.Blob
+	}
+	// 間引かれていて比べられなければ, 変わったものとして記録する.
+	if !merge && head != nil && sameInput(contentToProto(head), &apiv1alpha1.RevisionContent{BlobSha256: sum.String()}) {
+		return nil, invalidArgument("content", reject(apiv1alpha1.FieldViolationReason_FIELD_VIOLATION_REASON_REVISION_UNCHANGED, errors.New("expected_head の revision と中身が同じです. 統合でなければ, 変更のない revision は記録できません")))
 	}
 	revID, err := s.items.CommitRevision(ctx, itemstore.NewRevision{ItemID: itemID, From: from, Parents: parents, Content: newContent(ctx, sum)})
 	if err != nil {
@@ -112,24 +122,24 @@ func (s *itemService) CommitRevision(ctx context.Context, req *connect.Request[a
 	return connect.NewResponse(&apiv1alpha1.CommitRevisionResponse{Revision: revisionToProto(rev)}), nil
 }
 
-// inheritedContent は, CommitRevision で変更しないフィールドの引き継ぎ元として, expected_head の revision の中身を返す.
-// 間引かれていて引き継げない時, head が expected_head のままなら FAILED_PRECONDITION を返し, head が動いていれば早送りでない時と同じ ABORTED を返す. 間引かれるのは古い revision であることが多く, 古い expected_head を送った呼び出し側は, 現在の head を知って revision を作り直す必要があるため.
-func (s *itemService) inheritedContent(ctx context.Context, itemID, from itemstore.ID) (itemstore.Content, error) {
+// expectedHeadContent は, CommitRevision で変更しないフィールドの引き継ぎ元, および変更の有無の比較対象として, expected_head の revision の中身を返す. required が false の場合, 間引かれていれば nil を返す.
+// required が true で, 間引かれていて引き継げない時, head が expected_head のままなら FAILED_PRECONDITION を返し, head が動いていれば早送りでない時と同じ ABORTED を返す. 間引かれるのは古い revision であることが多く, 古い expected_head を送った呼び出し側は, 現在の head を知って revision を作り直す必要があるため.
+func (s *itemService) expectedHeadContent(ctx context.Context, itemID, from itemstore.ID, required bool) (*itemstore.Content, error) {
 	rev, err := s.items.Revision(ctx, from)
 	if err != nil {
-		return itemstore.Content{}, s.connectError(ctx, err)
+		return nil, s.connectError(ctx, err)
 	}
-	if rev.Content != nil {
-		return *rev.Content, nil
+	if rev.Content != nil || !required {
+		return rev.Content, nil
 	}
 	item, err := s.items.Item(ctx, itemID)
 	if err != nil {
-		return itemstore.Content{}, s.connectError(ctx, err)
+		return nil, s.connectError(ctx, err)
 	}
 	if item.Head != from {
-		return itemstore.Content{}, s.connectError(ctx, &itemstore.NotFastForwardError{ItemID: itemID, From: from, Head: item.Head})
+		return nil, s.connectError(ctx, &itemstore.NotFastForwardError{ItemID: itemID, From: from, Head: item.Head})
 	}
-	return itemstore.Content{}, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("expected_head の revision %s は間引かれているため, 変更しないフィールドを引き継げません", from))
+	return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("expected_head の revision %s は間引かれているため, 変更しないフィールドを引き継げません", from))
 }
 
 // newContent は, API から記録する revision の中身を作成する. 時刻と author はサーバが決め, 呼び出し側には指定させない. revision の body は, 形式 (lyell.storage.v1alpha1) を決めるまで空にする.
@@ -278,16 +288,20 @@ func revisionToProto(rev itemstore.Revision) *apiv1alpha1.Revision {
 	for i, p := range rev.Parents {
 		parents[i] = p.String()
 	}
-	out := &apiv1alpha1.Revision{Id: rev.ID.String(), ItemId: rev.ItemID.String(), Parents: parents}
 	// 間引かれた revision は content を持たない.
-	if c := rev.Content; c != nil {
-		out.Content = &apiv1alpha1.RevisionContent{
-			CreateTime:    timestamppb.New(c.CreatedAt),
-			AuthorUser:    c.AuthorUser,
-			AuthorMachine: c.AuthorMachine,
-			BlobSha256:    c.Blob.String(),
-			BlobSize:      c.BlobSize,
-		}
+	return &apiv1alpha1.Revision{Id: rev.ID.String(), ItemId: rev.ItemID.String(), Parents: parents, Content: contentToProto(rev.Content)}
+}
+
+// contentToProto は, revision の中身を API のメッセージにする. 間引かれていて c が nil なら nil を返す.
+func contentToProto(c *itemstore.Content) *apiv1alpha1.RevisionContent {
+	if c == nil {
+		return nil
 	}
-	return out
+	return &apiv1alpha1.RevisionContent{
+		CreateTime:    timestamppb.New(c.CreatedAt),
+		AuthorUser:    c.AuthorUser,
+		AuthorMachine: c.AuthorMachine,
+		BlobSha256:    c.Blob.String(),
+		BlobSize:      c.BlobSize,
+	}
 }

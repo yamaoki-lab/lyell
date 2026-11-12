@@ -31,6 +31,7 @@ service ItemService {
   }
 
   // CommitRevision は, item に revision を追加し, item の head をその revision へ進める. fast-forward のみを受け付ける.
+  // 統合でない (親が1つの) revision の content が, expected_head の revision と同じなら, 何も記録せずに INVALID_ARGUMENT を返す.
   // head が expected_head から変更されていたら, 何も記録せずに ABORTED を返し, 詳細情報に HeadMoved を付与する.
   // blob が存在しなければ, FAILED_PRECONDITION を返す. 引き継ぎ元となる expected_head の revision が間引かれていても, FAILED_PRECONDITION を返す.
   rpc CommitRevision(CommitRevisionRequest) returns (CommitRevisionResponse);
@@ -175,4 +176,6 @@ enum FieldViolationReason {
   FIELD_VIOLATION_REASON_UPDATE_MASK_WILDCARD = 13;
   // FIELD_VIOLATION_REASON_UPDATE_MASK_FIELD_UNKNOWN は, update_mask のパスが content に存在しないフィールドを指していること. field は update_mask.paths[i].
   FIELD_VIOLATION_REASON_UPDATE_MASK_FIELD_UNKNOWN = 14;
+  // FIELD_VIOLATION_REASON_REVISION_UNCHANGED は, 親が1つの revision の content が, 出力専用のフィールドを除いて expected_head の revision と同じであること. field は content. 親が2つ (統合) なら, 同じでも受け付ける.
+  FIELD_VIOLATION_REASON_REVISION_UNCHANGED = 15;
 }
