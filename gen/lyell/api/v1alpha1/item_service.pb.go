@@ -134,7 +134,7 @@ type CreateItemRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// kind は item の種類. 現在は ITEM_KIND_ASSET のみを受け付ける.
 	Kind ItemKind `protobuf:"varint,1,opt,name=kind,proto3,enum=lyell.api.v1alpha1.ItemKind" json:"kind,omitempty"`
-	// content は, 最初の revision の中身. blob_sha256 は必須で, blob を事前に保存しておく必要がある. blob_sha256 以外のフィールドは出力専用で, 設定しても無視する.
+	// content は, 最初の revision の中身. blob_sha256 は必須で, blob を事前に保存しておく必要がある. name は省略でき, 省略すると名前の無い revision になる. 出力専用のフィールドは, 設定しても無視する.
 	Content       *RevisionContent `protobuf:"bytes,3,opt,name=content,proto3" json:"content,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

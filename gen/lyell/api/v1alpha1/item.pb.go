@@ -225,7 +225,9 @@ type RevisionContent struct {
 	// blob_sha256 は, 中身のバイト列 (blob) の SHA-256 を, 小文字の16進数64文字で表記したもの. バイト列は /lyell/api/v1alpha1/blobs/sha256/<blob_sha256> で読み取る.
 	BlobSha256 string `protobuf:"bytes,4,opt,name=blob_sha256,json=blobSha256,proto3" json:"blob_sha256,omitempty"`
 	// blob_size は, 中身のバイト列のサイズ (バイト). ファイルシステムとして見せる時に, バイト列を取得せずにサイズを答えるため.
-	BlobSize      int64 `protobuf:"varint,5,opt,name=blob_size,json=blobSize,proto3" json:"blob_size,omitempty"`
+	BlobSize int64 `protobuf:"varint,5,opt,name=blob_size,json=blobSize,proto3" json:"blob_size,omitempty"`
+	// name は, revision の名前. 空の場合は名前なしを表す. 名前の制約 (使用できる文字や長さ) はまだ検証しない.
+	Name          string `protobuf:"bytes,6,opt,name=name,proto3" json:"name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -295,6 +297,13 @@ func (x *RevisionContent) GetBlobSize() int64 {
 	return 0
 }
 
+func (x *RevisionContent) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
 var File_lyell_api_v1alpha1_item_proto protoreflect.FileDescriptor
 
 const file_lyell_api_v1alpha1_item_proto_rawDesc = "" +
@@ -308,7 +317,7 @@ const file_lyell_api_v1alpha1_item_proto_rawDesc = "" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x17\n" +
 	"\aitem_id\x18\x02 \x01(\tR\x06itemId\x12\x18\n" +
 	"\aparents\x18\x03 \x03(\tR\aparents\x12=\n" +
-	"\acontent\x18\x04 \x01(\v2#.lyell.api.v1alpha1.RevisionContentR\acontent\"\xec\x01\n" +
+	"\acontent\x18\x04 \x01(\v2#.lyell.api.v1alpha1.RevisionContentR\acontent\"\x80\x02\n" +
 	"\x0fRevisionContent\x12A\n" +
 	"\vcreate_time\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampB\x04\xe2A\x01\x03R\n" +
 	"createTime\x12%\n" +
@@ -317,7 +326,8 @@ const file_lyell_api_v1alpha1_item_proto_rawDesc = "" +
 	"\x0eauthor_machine\x18\x03 \x01(\tB\x04\xe2A\x01\x03R\rauthorMachine\x12\x1f\n" +
 	"\vblob_sha256\x18\x04 \x01(\tR\n" +
 	"blobSha256\x12!\n" +
-	"\tblob_size\x18\x05 \x01(\x03B\x04\xe2A\x01\x03R\bblobSize*T\n" +
+	"\tblob_size\x18\x05 \x01(\x03B\x04\xe2A\x01\x03R\bblobSize\x12\x12\n" +
+	"\x04name\x18\x06 \x01(\tR\x04name*T\n" +
 	"\bItemKind\x12\x19\n" +
 	"\x15ITEM_KIND_UNSPECIFIED\x10\x00\x12\x13\n" +
 	"\x0fITEM_KIND_ASSET\x10\x01\x12\x18\n" +

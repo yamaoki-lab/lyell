@@ -33,7 +33,11 @@ func (s *itemService) CreateItem(ctx context.Context, req *connect.Request[apiv1
 	if err != nil {
 		return nil, invalidArgument("content.blob_sha256", err)
 	}
-	item, err := s.items.CreateItem(ctx, itemstore.NewItem{Kind: kind, Content: newContent(ctx, sum, nil)})
+	body, err := withName(nil, req.Msg.GetContent().GetName())
+	if err != nil {
+		return nil, s.connectError(ctx, err)
+	}
+	item, err := s.items.CreateItem(ctx, itemstore.NewItem{Kind: kind, Content: newContent(ctx, sum, body)})
 	if err != nil {
 		return nil, s.connectError(ctx, err)
 	}
@@ -90,28 +94,37 @@ func (s *itemService) CommitRevision(ctx context.Context, req *connect.Request[a
 		return nil, err
 	}
 	var sum blobstore.Sum
-	inherit := !updated[blobSha256Field]
-	if !inherit {
+	inheritBlob, inheritName := !updated[blobSha256Field], !updated[nameField]
+	if !inheritBlob {
 		if sum, err = parseSum(req.Msg.GetContent().GetBlobSha256()); err != nil {
 			return nil, invalidArgument("content.blob_sha256", err)
 		}
 	}
 	// 新しい body は expected_head の body から作り, マージでなければ中身が変わったかどうかも expected_head の中身と比べるため, 引き継ぐフィールドが無い場合も読み取る.
 	merge := len(parents) > 1
-	head, err := s.expectedHeadContent(ctx, itemID, from, inherit)
+	head, err := s.expectedHeadContent(ctx, itemID, from, inheritBlob || inheritName)
 	if err != nil {
 		return nil, err
 	}
 	// 間引かれていれば, 前の body は残っていないので, 空の body から作る.
-	var body []byte
+	var prev []byte
 	if head != nil {
-		body = head.Body
+		prev = head.Body
 	}
-	if inherit {
+	if inheritBlob {
 		sum = head.Blob
 	}
+	// 名前を変更しなければ, 前の body の名前がそのまま残る. update_mask に name を指定して値を空にすると, 名前を消去する.
+	name := bodyName(prev)
+	if !inheritName {
+		name = req.Msg.GetContent().GetName()
+	}
+	body, err := withName(prev, name)
+	if err != nil {
+		return nil, s.connectError(ctx, err)
+	}
 	// 間引かれていて比べられなければ, 変わったものとして記録する.
-	if !merge && head != nil && sameInput(contentToProto(head), &apiv1alpha1.RevisionContent{BlobSha256: sum.String()}) {
+	if !merge && head != nil && sameInput(contentToProto(head), &apiv1alpha1.RevisionContent{BlobSha256: sum.String(), Name: name}) {
 		return nil, invalidArgument("content", reject(apiv1alpha1.FieldViolationReason_FIELD_VIOLATION_REASON_REVISION_UNCHANGED, errors.New("expected_head の revision と中身が同じです. 統合でなければ, 変更のない revision は記録できません")))
 	}
 	revID, err := s.items.CommitRevision(ctx, itemstore.NewRevision{ItemID: itemID, From: from, Parents: parents, Content: newContent(ctx, sum, body)})
@@ -306,5 +319,6 @@ func contentToProto(c *itemstore.Content) *apiv1alpha1.RevisionContent {
 		AuthorMachine: c.AuthorMachine,
 		BlobSha256:    c.Blob.String(),
 		BlobSize:      c.BlobSize,
+		Name:          bodyName(c.Body),
 	}
 }
