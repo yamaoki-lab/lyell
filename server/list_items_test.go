@@ -88,16 +88,17 @@ func TestListItems_PageTokenMustMatchRequest(t *testing.T) {
 	}
 
 	tests := []struct {
-		name string
-		req  *apiv1alpha1.ListItemsRequest
+		name   string
+		req    *apiv1alpha1.ListItemsRequest
+		reason string
 	}{
-		{name: "order_by が異なる", req: &apiv1alpha1.ListItemsRequest{PageToken: token, OrderBy: "item.id"}},
-		{name: "形式が不正", req: &apiv1alpha1.ListItemsRequest{PageToken: "not-a-token"}},
-		{name: "checksum 部分を変更", req: &apiv1alpha1.ListItemsRequest{PageToken: replaceByte(token, len(token)-3)}},
+		{name: "order_by が異なる", req: &apiv1alpha1.ListItemsRequest{PageToken: token, OrderBy: "item.id"}, reason: "PAGE_TOKEN_MISMATCH"},
+		{name: "形式が不正", req: &apiv1alpha1.ListItemsRequest{PageToken: "not-a-token"}, reason: "PAGE_TOKEN_MALFORMED"},
+		{name: "checksum 部分を変更", req: &apiv1alpha1.ListItemsRequest{PageToken: replaceByte(token, len(token)-3)}, reason: "PAGE_TOKEN_MISMATCH"},
 	}
 	for _, tt := range tests {
 		_, err := c.ListItems(ctx, connect.NewRequest(tt.req))
-		wantCode(t, tt.name, err, connect.CodeInvalidArgument)
+		wantViolation(t, tt.name, err, "page_token", tt.reason)
 	}
 }
 
@@ -115,16 +116,18 @@ func TestListItems_RejectsBadRequest(t *testing.T) {
 	tests := []struct {
 		name string
 		req  *apiv1alpha1.ListItemsRequest
+		// order_by の reason はまだ設定しない.
+		field, reason string
 	}{
-		{name: "負の page_size", req: &apiv1alpha1.ListItemsRequest{PageSize: -1}},
-		{name: "item.id 以外の並び順", req: &apiv1alpha1.ListItemsRequest{OrderBy: "item.kind"}},
-		{name: "並び順のフィールドが2つ", req: &apiv1alpha1.ListItemsRequest{OrderBy: "item.id, item.id desc"}},
-		{name: "order_by の形式が不正", req: &apiv1alpha1.ListItemsRequest{OrderBy: "item.id up"}},
-		{name: "asc", req: &apiv1alpha1.ListItemsRequest{OrderBy: "item.id asc"}},
+		{name: "負の page_size", req: &apiv1alpha1.ListItemsRequest{PageSize: -1}, field: "page_size", reason: "PAGE_SIZE_NEGATIVE"},
+		{name: "item.id 以外の並び順", req: &apiv1alpha1.ListItemsRequest{OrderBy: "item.kind"}, field: "order_by"},
+		{name: "並び順のフィールドが2つ", req: &apiv1alpha1.ListItemsRequest{OrderBy: "item.id, item.id desc"}, field: "order_by"},
+		{name: "order_by の形式が不正", req: &apiv1alpha1.ListItemsRequest{OrderBy: "item.id up"}, field: "order_by"},
+		{name: "asc", req: &apiv1alpha1.ListItemsRequest{OrderBy: "item.id asc"}, field: "order_by"},
 	}
 	for _, tt := range tests {
 		_, err := c.ListItems(context.Background(), connect.NewRequest(tt.req))
-		wantCode(t, tt.name, err, connect.CodeInvalidArgument)
+		wantViolation(t, tt.name, err, tt.field, tt.reason)
 	}
 }
 
@@ -185,7 +188,8 @@ func TestListItems_RejectsUnsupportedFilter(t *testing.T) {
 	}
 	for _, tt := range tests {
 		_, err := c.ListItems(context.Background(), connect.NewRequest(&apiv1alpha1.ListItemsRequest{Filter: tt.filter}))
-		wantCode(t, tt.name, err, connect.CodeInvalidArgument)
+		// filter の reason はまだ設定しない.
+		wantViolation(t, tt.name, err, "filter", "")
 	}
 }
 

@@ -2,6 +2,9 @@
 version: v2 # yamaoki-lint:ignore
 modules:
   - path: proto
+# googleapis は, 出力専用のフィールドを google.api.field_behavior (AIP-203) で示すために使う. 版は buf.lock で固定する.
+deps:
+  - buf.build/googleapis/googleapis
 lint:
   # COMMENTS は, 全ての要素に説明を求める. 説明からドキュメントを生成するため.
   use:

@@ -49,7 +49,7 @@ func TestWorkingCopy_RoundTrip(t *testing.T) {
 	c := apiv1alpha1connect.NewItemServiceClient(hs.Client(), base)
 	ctx := context.Background()
 
-	created, err := c.CreateItem(ctx, connect.NewRequest(&apiv1alpha1.CreateItemRequest{Kind: apiv1alpha1.ItemKind_ITEM_KIND_ASSET, BlobSha256: putBlobHTTP(t, base, "v1")}))
+	created, err := c.CreateItem(ctx, connect.NewRequest(&apiv1alpha1.CreateItemRequest{Kind: apiv1alpha1.ItemKind_ITEM_KIND_ASSET, Content: &apiv1alpha1.RevisionContent{BlobSha256: putBlobHTTP(t, base, "v1")}}))
 	if err != nil {
 		t.Fatalf("CreateItem() error = %v, want nil", err)
 	}
@@ -61,7 +61,7 @@ func TestWorkingCopy_RoundTrip(t *testing.T) {
 	}
 
 	// 書き換えた中身を保存し, 取り出した時の head を前提として, 新しい revision をコミットする.
-	res, err := c.CommitRevision(ctx, connect.NewRequest(&apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: head, BlobSha256: putBlobHTTP(t, base, "v2")}))
+	res, err := c.CommitRevision(ctx, connect.NewRequest(&apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: head, Content: &apiv1alpha1.RevisionContent{BlobSha256: putBlobHTTP(t, base, "v2")}}))
 	if err != nil {
 		t.Fatalf("CommitRevision() error = %v, want nil", err)
 	}
@@ -71,7 +71,7 @@ func TestWorkingCopy_RoundTrip(t *testing.T) {
 	}
 
 	// 別の作業コピーが, 古い head を前提としてコミットしようとする. head は更新されない.
-	_, err = c.CommitRevision(ctx, connect.NewRequest(&apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: head, BlobSha256: putBlobHTTP(t, base, "v3")}))
+	_, err = c.CommitRevision(ctx, connect.NewRequest(&apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: head, Content: &apiv1alpha1.RevisionContent{BlobSha256: putBlobHTTP(t, base, "v3")}}))
 	wantCode(t, "古い head を前提とした CommitRevision()", err, connect.CodeAborted)
 	if newHead, data := checkout(t, base, c, itemID); newHead != r2 || data != "v2" {
 		t.Errorf("拒否された後の head と中身 = %s %q, want %s %q", newHead, data, r2, "v2")

@@ -63,7 +63,7 @@ func (s *itemService) ListItems(ctx context.Context, req *connect.Request[apiv1a
 func pageSize(n int32) (int, error) {
 	switch {
 	case n < 0:
-		return 0, fmt.Errorf("負の値 %d は指定できません", n)
+		return 0, reject(apiv1alpha1.FieldViolationReason_FIELD_VIOLATION_REASON_PAGE_SIZE_NEGATIVE, fmt.Errorf("負の値 %d は指定できません", n))
 	case n == 0:
 		return defaultPageSize, nil
 	}
@@ -133,12 +133,12 @@ func decodePageToken(s string, want pageTokenChecksum) (itemstore.ID, error) {
 	// Strict: 未使用ビットが 0 でない表現を拒否し, 同じ page token の表現を一意に保つ.
 	b, err := base64.RawURLEncoding.Strict().DecodeString(s)
 	if err != nil || len(b) != 1+len(after)+len(sum) || b[0] != pageTokenVersion {
-		return itemstore.ID{}, errors.New("page token の形式が不正です")
+		return itemstore.ID{}, reject(apiv1alpha1.FieldViolationReason_FIELD_VIOLATION_REASON_PAGE_TOKEN_MALFORMED, errors.New("page token の形式が不正です"))
 	}
 	copy(after[:], b[1:])
 	copy(sum[:], b[1+len(after):])
 	if sum != want {
-		return itemstore.ID{}, errors.New("page token の作成時と filter または order_by が異なります")
+		return itemstore.ID{}, reject(apiv1alpha1.FieldViolationReason_FIELD_VIOLATION_REASON_PAGE_TOKEN_MISMATCH, errors.New("page token の作成時と filter または order_by が異なります"))
 	}
 	return after, nil
 }

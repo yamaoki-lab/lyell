@@ -7,6 +7,7 @@
 package apiv1alpha1
 
 import (
+	_ "google.golang.org/genproto/googleapis/api/annotations"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
@@ -298,7 +299,7 @@ var File_lyell_api_v1alpha1_item_proto protoreflect.FileDescriptor
 
 const file_lyell_api_v1alpha1_item_proto_rawDesc = "" +
 	"\n" +
-	"\x1dlyell/api/v1alpha1/item.proto\x12\x12lyell.api.v1alpha1\x1a\x1fgoogle/protobuf/timestamp.proto\"\\\n" +
+	"\x1dlyell/api/v1alpha1/item.proto\x12\x12lyell.api.v1alpha1\x1a\x1fgoogle/api/field_behavior.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\\\n" +
 	"\x04Item\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x120\n" +
 	"\x04kind\x18\x02 \x01(\x0e2\x1c.lyell.api.v1alpha1.ItemKindR\x04kind\x12\x12\n" +
@@ -307,16 +308,16 @@ const file_lyell_api_v1alpha1_item_proto_rawDesc = "" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x17\n" +
 	"\aitem_id\x18\x02 \x01(\tR\x06itemId\x12\x18\n" +
 	"\aparents\x18\x03 \x03(\tR\aparents\x12=\n" +
-	"\acontent\x18\x04 \x01(\v2#.lyell.api.v1alpha1.RevisionContentR\acontent\"\xd4\x01\n" +
-	"\x0fRevisionContent\x12;\n" +
-	"\vcreate_time\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"createTime\x12\x1f\n" +
-	"\vauthor_user\x18\x02 \x01(\tR\n" +
-	"authorUser\x12%\n" +
-	"\x0eauthor_machine\x18\x03 \x01(\tR\rauthorMachine\x12\x1f\n" +
+	"\acontent\x18\x04 \x01(\v2#.lyell.api.v1alpha1.RevisionContentR\acontent\"\xec\x01\n" +
+	"\x0fRevisionContent\x12A\n" +
+	"\vcreate_time\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampB\x04\xe2A\x01\x03R\n" +
+	"createTime\x12%\n" +
+	"\vauthor_user\x18\x02 \x01(\tB\x04\xe2A\x01\x03R\n" +
+	"authorUser\x12+\n" +
+	"\x0eauthor_machine\x18\x03 \x01(\tB\x04\xe2A\x01\x03R\rauthorMachine\x12\x1f\n" +
 	"\vblob_sha256\x18\x04 \x01(\tR\n" +
-	"blobSha256\x12\x1b\n" +
-	"\tblob_size\x18\x05 \x01(\x03R\bblobSize*T\n" +
+	"blobSha256\x12!\n" +
+	"\tblob_size\x18\x05 \x01(\x03B\x04\xe2A\x01\x03R\bblobSize*T\n" +
 	"\bItemKind\x12\x19\n" +
 	"\x15ITEM_KIND_UNSPECIFIED\x10\x00\x12\x13\n" +
 	"\x0fITEM_KIND_ASSET\x10\x01\x12\x18\n" +
