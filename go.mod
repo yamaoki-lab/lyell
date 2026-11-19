@@ -8,6 +8,7 @@ require (
 	connectrpc.com/connect v1.21.1
 	github.com/google/uuid v1.6.0
 	go.einride.tech/aip v0.86.3
+	golang.org/x/text v0.44.0
 	google.golang.org/genproto/googleapis/api v0.0.0-20250528174236-200df99c418a
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250528174236-200df99c418a
 	google.golang.org/protobuf v1.36.12
