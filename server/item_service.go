@@ -33,7 +33,11 @@ func (s *itemService) CreateItem(ctx context.Context, req *connect.Request[apiv1
 	if err != nil {
 		return nil, invalidArgument("content.blob_sha256", err)
 	}
-	body, err := withName(nil, req.Msg.GetContent().GetName())
+	name, err := checkName(req.Msg.GetContent().GetName())
+	if err != nil {
+		return nil, err
+	}
+	body, err := withName(nil, name)
 	if err != nil {
 		return nil, s.connectError(ctx, err)
 	}
@@ -100,6 +104,13 @@ func (s *itemService) CommitRevision(ctx context.Context, req *connect.Request[a
 			return nil, invalidArgument("content.blob_sha256", err)
 		}
 	}
+	// 名前を変更する時だけ, 新しい名前を自動で修正して確かめる. 引き継ぐ名前は確かめ直さない.
+	var newName string
+	if !inheritName {
+		if newName, err = checkName(req.Msg.GetContent().GetName()); err != nil {
+			return nil, err
+		}
+	}
 	// 新しい body は expected_head の body から作り, マージでなければ中身が変わったかどうかも expected_head の中身と比べるため, 引き継ぐフィールドが無い場合も読み取る.
 	merge := len(parents) > 1
 	head, err := s.expectedHeadContent(ctx, itemID, from, inheritBlob || inheritName)
@@ -117,7 +128,7 @@ func (s *itemService) CommitRevision(ctx context.Context, req *connect.Request[a
 	// 名前を変更しなければ, 前の body の名前がそのまま残る. update_mask に name を指定して値を空にすると, 名前を消去する.
 	name := bodyName(prev)
 	if !inheritName {
-		name = req.Msg.GetContent().GetName()
+		name = newName
 	}
 	body, err := withName(prev, name)
 	if err != nil {
@@ -195,7 +206,7 @@ func (s *itemService) connectError(ctx context.Context, err error) error {
 	return connect.NewError(connect.CodeInternal, errors.New("内部エラー"))
 }
 
-// rejection は, 呼び出し側の誤りに, 拒否の理由 (BadRequest の reason) を添えたエラー.
+// rejection は, 呼び出し側の誤りに, 拒否理由 (BadRequest の reason) を添えたエラー.
 type rejection struct {
 	reason apiv1alpha1.FieldViolationReason
 	err    error
@@ -216,15 +227,22 @@ func reasonName(r apiv1alpha1.FieldViolationReason) string {
 	return strings.TrimPrefix(r.String(), reasonPrefix)
 }
 
-// invalidArgument は, INVALID_ARGUMENT のエラーを作り, 詳細情報に BadRequest (AIP-193) を付ける. field はリクエスト内のフィールドのパス. err が reject で作ったエラーなら, その理由を reason に設定する.
-func invalidArgument(field string, err error) error {
-	ce := connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("%s: %w", field, err))
-	v := &errdetails.BadRequest_FieldViolation{Field: field, Description: err.Error()}
-	var r *rejection
-	if errors.As(err, &r) {
-		v.Reason = reasonName(r.reason)
+// invalidArgument は, INVALID_ARGUMENT のエラーを作り, 詳細情報に BadRequest (AIP-193) を付ける. field はリクエスト内のフィールドのパス. errs はそのフィールドの違反で, 1つの違反を1つの field violation にする. reject で作ったエラーなら, その理由を reason に設定する.
+func invalidArgument(field string, errs ...error) error {
+	msgs := make([]string, len(errs))
+	br := &errdetails.BadRequest{}
+	for i, err := range errs {
+		msgs[i] = err.Error()
+		v := &errdetails.BadRequest_FieldViolation{Field: field, Description: err.Error()}
+		var r *rejection
+		if errors.As(err, &r) {
+			v.Reason = reasonName(r.reason)
+		}
+		br.FieldViolations = append(br.FieldViolations, v)
 	}
-	if d, derr := connect.NewErrorDetail(&errdetails.BadRequest{FieldViolations: []*errdetails.BadRequest_FieldViolation{v}}); derr == nil {
+	// メッセージには, 違反の説明を, 日本語の文の区切りと同じ ". " でつないで並べる.
+	ce := connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("%s: %s", field, strings.Join(msgs, ". ")))
+	if d, derr := connect.NewErrorDetail(br); derr == nil {
 		ce.AddDetail(d)
 	}
 	return ce
