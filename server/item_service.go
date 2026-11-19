@@ -33,7 +33,11 @@ func (s *itemService) CreateItem(ctx context.Context, req *connect.Request[apiv1
 	if err != nil {
 		return nil, invalidArgument("content.blob_sha256", err)
 	}
-	item, err := s.items.CreateItem(ctx, itemstore.NewItem{Kind: kind, Content: newContent(ctx, sum)})
+	body, err := withName(nil, req.Msg.GetContent().GetName())
+	if err != nil {
+		return nil, s.connectError(ctx, err)
+	}
+	item, err := s.items.CreateItem(ctx, itemstore.NewItem{Kind: kind, Content: newContent(ctx, sum, body)})
 	if err != nil {
 		return nil, s.connectError(ctx, err)
 	}
@@ -90,28 +94,40 @@ func (s *itemService) CommitRevision(ctx context.Context, req *connect.Request[a
 		return nil, err
 	}
 	var sum blobstore.Sum
-	inherit := !updated[blobSha256Field]
-	if !inherit {
+	inheritBlob, inheritName := !updated[blobSha256Field], !updated[nameField]
+	if !inheritBlob {
 		if sum, err = parseSum(req.Msg.GetContent().GetBlobSha256()); err != nil {
 			return nil, invalidArgument("content.blob_sha256", err)
 		}
 	}
-	// 統合でなければ, 中身が変わったかを expected_head の中身と比べるので, 引き継がない時も読む.
+	// 新しい body は expected_head の body から作り, マージでなければ中身が変わったかどうかも expected_head の中身と比べるため, 引き継ぐフィールドが無い場合も読み取る.
 	merge := len(parents) > 1
-	var head *itemstore.Content
-	if inherit || !merge {
-		if head, err = s.expectedHeadContent(ctx, itemID, from, inherit); err != nil {
-			return nil, err
-		}
+	head, err := s.expectedHeadContent(ctx, itemID, from, inheritBlob || inheritName)
+	if err != nil {
+		return nil, err
 	}
-	if inherit {
+	// 間引かれていれば, 前の body は残っていないので, 空の body から作る.
+	var prev []byte
+	if head != nil {
+		prev = head.Body
+	}
+	if inheritBlob {
 		sum = head.Blob
 	}
+	// 名前を変更しなければ, 前の body の名前がそのまま残る. update_mask に name を指定して値を空にすると, 名前を消去する.
+	name := bodyName(prev)
+	if !inheritName {
+		name = req.Msg.GetContent().GetName()
+	}
+	body, err := withName(prev, name)
+	if err != nil {
+		return nil, s.connectError(ctx, err)
+	}
 	// 間引かれていて比べられなければ, 変わったものとして記録する.
-	if !merge && head != nil && sameInput(contentToProto(head), &apiv1alpha1.RevisionContent{BlobSha256: sum.String()}) {
+	if !merge && head != nil && sameInput(contentToProto(head), &apiv1alpha1.RevisionContent{BlobSha256: sum.String(), Name: name}) {
 		return nil, invalidArgument("content", reject(apiv1alpha1.FieldViolationReason_FIELD_VIOLATION_REASON_REVISION_UNCHANGED, errors.New("expected_head の revision と中身が同じです. 統合でなければ, 変更のない revision は記録できません")))
 	}
-	revID, err := s.items.CommitRevision(ctx, itemstore.NewRevision{ItemID: itemID, From: from, Parents: parents, Content: newContent(ctx, sum)})
+	revID, err := s.items.CommitRevision(ctx, itemstore.NewRevision{ItemID: itemID, From: from, Parents: parents, Content: newContent(ctx, sum, body)})
 	if err != nil {
 		return nil, s.connectError(ctx, err)
 	}
@@ -142,10 +158,10 @@ func (s *itemService) expectedHeadContent(ctx context.Context, itemID, from item
 	return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("expected_head の revision %s は間引かれているため, 変更しないフィールドを引き継げません", from))
 }
 
-// newContent は, API から記録する revision の中身を作成する. 時刻と author はサーバが決め, 呼び出し側には指定させない. revision の body は, 形式 (lyell.storage.v1alpha1) を決めるまで空にする.
-func newContent(ctx context.Context, sum blobstore.Sum) itemstore.Content {
+// newContent は, API から記録する revision の中身を作成する. 時刻と author はサーバが決め, 呼び出し側には指定させない. 引数 body には, 前の revision の body (最初の revision では nil) を渡す. itemstore が列に写すフィールドを上書きし, この Lyell が知らないフィールドを含む他のフィールドは残すので, 新しい Lyell が書いた revision の上に古い Lyell がコミットしても, 新しいフィールドは失われない.
+func newContent(ctx context.Context, sum blobstore.Sum, body []byte) itemstore.Content {
 	user, machine := author(ctx)
-	return itemstore.Content{CreatedAt: time.Now(), AuthorUser: user, AuthorMachine: machine, Blob: sum}
+	return itemstore.Content{CreatedAt: time.Now(), AuthorUser: user, AuthorMachine: machine, Blob: sum, Body: body}
 }
 
 // connectError は, itemstore のエラーを Connect のエラーコードに対応させる. 呼び出し側の誤りはメッセージをそのまま返す. それ以外は内部エラーとして記録し, 詳細 (DB のパス等) を外に出さない.
@@ -303,5 +319,6 @@ func contentToProto(c *itemstore.Content) *apiv1alpha1.RevisionContent {
 		AuthorMachine: c.AuthorMachine,
 		BlobSha256:    c.Blob.String(),
 		BlobSize:      c.BlobSize,
+		Name:          bodyName(c.Body),
 	}
 }

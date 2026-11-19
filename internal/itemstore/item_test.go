@@ -13,14 +13,14 @@ import (
 	"github.com/yamaoki-lab/lyell/internal/blobstore"
 )
 
-func testContent(body string) Content {
+// testContent は, data を中身のバイト列とする Content を作る. Body は空にする.
+func testContent(data string) Content {
 	return Content{
 		// ミリ秒より細かい部分が切り捨てられることを確認するため, ナノ秒まで指定する.
 		CreatedAt:     time.Date(2026, 9, 28, 12, 34, 56, 789_123_456, time.UTC),
 		AuthorUser:    "user",
 		AuthorMachine: "machine",
-		Blob:          blobstore.Sum(sha256.Sum256([]byte(body))),
-		Body:          []byte(body),
+		Blob:          blobstore.Sum(sha256.Sum256([]byte(data))),
 	}
 }
 
@@ -48,7 +48,7 @@ func TestCreateItem_ThenRead(t *testing.T) {
 	ctx := context.Background()
 	content := testContent("body")
 
-	item, err := s.CreateItem(ctx, NewItem{Kind: KindAsset, Content: content, Data: bytes.NewReader(content.Body)})
+	item, err := s.CreateItem(ctx, NewItem{Kind: KindAsset, Content: content, Data: strings.NewReader("body")})
 	if err != nil {
 		t.Fatalf("CreateItem() error = %v, want nil", err)
 	}
@@ -76,10 +76,18 @@ func TestCreateItem_ThenRead(t *testing.T) {
 	}
 	want := content
 	want.CreatedAt = content.CreatedAt.Truncate(time.Millisecond)
-	want.BlobSize = int64(len(content.Body))
+	want.BlobSize = int64(len("body"))
 	c := rev.Content
-	if !c.CreatedAt.Equal(want.CreatedAt) || c.AuthorUser != want.AuthorUser || c.AuthorMachine != want.AuthorMachine || c.Blob != want.Blob || c.BlobSize != want.BlobSize || !bytes.Equal(c.Body, want.Body) {
+	if !c.CreatedAt.Equal(want.CreatedAt) || c.AuthorUser != want.AuthorUser || c.AuthorMachine != want.AuthorMachine || c.Blob != want.Blob || c.BlobSize != want.BlobSize {
 		t.Errorf("Revision().Content = %+v, want %+v", *c, want)
+	}
+	// 記録した body も同じ値を持つ.
+	cols, err := columnsFromBody(c.Body)
+	if err != nil {
+		t.Fatalf("記録した body を読めない: %v", err)
+	}
+	if cols.createdAt != want.CreatedAt.UnixMilli() || cols.authorUser != want.AuthorUser || cols.authorMachine != want.AuthorMachine || !bytes.Equal(cols.blob, want.Blob[:]) || cols.blobSize != want.BlobSize {
+		t.Errorf("記録した body = %+v, want %+v", cols, want)
 	}
 }
 
@@ -87,11 +95,11 @@ func TestCreateItem_EmptyBodyIsNotThinned(t *testing.T) {
 	s, _ := openTestStore(t)
 	ctx := context.Background()
 
-	// 空の Protobuf のメッセージは0バイトになる. nil で渡されても, 間引かれたことを示す NULL と混同しない.
+	// Body が nil や長さ0でも, 記録する body には itemstore が中身の列と同じフィールドを入れるので, 間引かれたことを示す NULL にはならない.
 	for _, body := range [][]byte{nil, {}} {
 		content := testContent("")
 		content.Body = body
-		item, err := s.CreateItem(ctx, NewItem{Kind: KindAsset, Content: content, Data: bytes.NewReader(content.Body)})
+		item, err := s.CreateItem(ctx, NewItem{Kind: KindAsset, Content: content, Data: strings.NewReader("")})
 		if err != nil {
 			t.Fatalf("CreateItem() error = %v, want nil", err)
 		}
@@ -108,8 +116,11 @@ func TestCreateItem_EmptyBodyIsNotThinned(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Revision() error = %v, want nil", err)
 		}
-		if rev.Content == nil || rev.Content.Body == nil || len(rev.Content.Body) != 0 {
-			t.Errorf("空の body (%#v) の Revision().Content = %+v, want 長さ0の Body", body, rev.Content)
+		if rev.Content == nil {
+			t.Fatalf("空の body (%#v) の Revision().Content = nil, want non-nil", body)
+		}
+		if cols, err := columnsFromBody(rev.Content.Body); err != nil || cols.authorUser != content.AuthorUser {
+			t.Errorf("空の body (%#v) から記録した body = %v (err = %v), want 利用者 %q を持つ body", body, rev.Content.Body, err, content.AuthorUser)
 		}
 	}
 }
@@ -134,7 +145,7 @@ func TestCreateItem_RejectsInvalidInputWithoutWriting(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if _, err := s.CreateItem(ctx, NewItem{Kind: tt.kind, Content: tt.content, Data: bytes.NewReader(tt.content.Body)}); !errors.Is(err, ErrInvalid) {
+			if _, err := s.CreateItem(ctx, NewItem{Kind: tt.kind, Content: tt.content, Data: strings.NewReader("body")}); !errors.Is(err, ErrInvalid) {
 				t.Errorf("CreateItem() error = %v, want ErrInvalid", err)
 			}
 		})
@@ -219,7 +230,7 @@ func TestRevision_ParentsSurviveThinning(t *testing.T) {
 	}
 }
 
-// newTestItem は, body を中身とする asset の NewItem を作成する.
-func newTestItem(body string) NewItem {
-	return NewItem{Kind: KindAsset, Content: testContent(body), Data: strings.NewReader(body)}
+// newTestItem は, data を中身のバイト列とする asset の NewItem を作成する.
+func newTestItem(data string) NewItem {
+	return NewItem{Kind: KindAsset, Content: testContent(data), Data: strings.NewReader(data)}
 }

@@ -44,7 +44,7 @@ message CreateItemRequest {
 
   // kind は item の種類. 現在は ITEM_KIND_ASSET のみを受け付ける.
   ItemKind kind = 1;
-  // content は, 最初の revision の中身. blob_sha256 は必須で, blob を事前に保存しておく必要がある. blob_sha256 以外のフィールドは出力専用で, 設定しても無視する.
+  // content は, 最初の revision の中身. blob_sha256 は必須で, blob を事前に保存しておく必要がある. name は省略でき, 省略すると名前の無い revision になる. 出力専用のフィールドは, 設定しても無視する.
   RevisionContent content = 3;
 }
 

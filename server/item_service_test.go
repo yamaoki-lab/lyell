@@ -366,9 +366,9 @@ func TestCommitRevision_RejectsUnchanged(t *testing.T) {
 	// 統合は, 中身が変わらなくても2つの履歴をまとめた記録なので受け付ける.
 	merged := commit(t, c, &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1.GetId(), Parents: []string{r1.GetId(), other}})
 
-	// 間引かれていて比べられなければ, 変わったものとして記録する.
+	// expected_head が間引かれていて中身を比較できない場合は, 変更があったものとして記録する. 引き継ぎができないため, 全てのフィールドを指定する.
 	thinRevision(t, filepath.Join(dir, "lyell.db"), merged.GetId())
-	commit(t, c, &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: merged.GetId(), Content: &apiv1alpha1.RevisionContent{BlobSha256: same}})
+	commit(t, c, &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: merged.GetId(), Content: &apiv1alpha1.RevisionContent{BlobSha256: same}, UpdateMask: mask("blob_sha256", "name")})
 }
 
 // thinRevision は, DB を直接書き換えて, 指定した id の revision の中身を間引く. 間引く API はまだ無い.
@@ -404,8 +404,11 @@ func TestCommitRevision_ThinnedExpectedHead(t *testing.T) {
 		// 変更しないフィールドがあると, 引き継ぎ元の中身が無いので記録できない.
 		_, err := c.CommitRevision(ctx, connect.NewRequest(&apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1}))
 		wantCode(t, "間引かれた head から引き継ぐ CommitRevision()", err, connect.CodeFailedPrecondition)
-		// 全て指定すれば, 引き継ぐものが無いので記録できる.
-		commit(t, c, &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Content: &apiv1alpha1.RevisionContent{BlobSha256: putBlob(t, s, "r2")}})
+		// blob_sha256 だけを指定しても, name を引き継ぐので記録できない.
+		_, err = c.CommitRevision(ctx, connect.NewRequest(&apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Content: &apiv1alpha1.RevisionContent{BlobSha256: putBlob(t, s, "r2")}}))
+		wantCode(t, "間引かれた head から name を引き継ぐ CommitRevision()", err, connect.CodeFailedPrecondition)
+		// update_mask に全てのフィールドを指定すれば, 引き継ぐものが無いため記録できる. 空の name は, update_mask に指定すれば消去として扱う.
+		commit(t, c, &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Content: &apiv1alpha1.RevisionContent{BlobSha256: putBlob(t, s, "r2")}, UpdateMask: mask("blob_sha256", "name")})
 	})
 
 	t.Run("head が動いている", func(t *testing.T) {
@@ -459,7 +462,7 @@ func TestCommitRevision_ErrorCodes(t *testing.T) {
 		{name: "SHA-256 が大文字", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Content: &apiv1alpha1.RevisionContent{BlobSha256: strings.ToUpper(sum)}}, want: connect.CodeInvalidArgument, field: "content.blob_sha256", reason: "BLOB_SHA256_MALFORMED"},
 		{name: "update_mask で SHA-256 を空にする", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, UpdateMask: mask("blob_sha256")}, want: connect.CodeInvalidArgument, field: "content.blob_sha256", reason: "BLOB_SHA256_REQUIRED"},
 		{name: "update_mask にワイルドカード", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Content: &apiv1alpha1.RevisionContent{BlobSha256: sum}, UpdateMask: mask("blob_sha256", "*")}, want: connect.CodeInvalidArgument, field: "update_mask.paths[1]", reason: "UPDATE_MASK_WILDCARD"},
-		{name: "update_mask に存在しないフィールド", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Content: &apiv1alpha1.RevisionContent{BlobSha256: sum}, UpdateMask: mask("name")}, want: connect.CodeInvalidArgument, field: "update_mask.paths[0]", reason: "UPDATE_MASK_FIELD_UNKNOWN"},
+		{name: "update_mask に存在しないフィールド", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Content: &apiv1alpha1.RevisionContent{BlobSha256: sum}, UpdateMask: mask("note")}, want: connect.CodeInvalidArgument, field: "update_mask.paths[0]", reason: "UPDATE_MASK_FIELD_UNKNOWN"},
 		{name: "存在しない expected_head から引き継ぐ", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: unknown}, want: connect.CodeNotFound},
 		{name: "親が重複している", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Parents: []string{r1, r1}, Content: &apiv1alpha1.RevisionContent{BlobSha256: sum}}, want: connect.CodeInvalidArgument, field: "parents[1]", reason: "PARENTS_DUPLICATE"},
 		{name: "親が上限を超える", req: &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Parents: []string{r1, other, another}, Content: &apiv1alpha1.RevisionContent{BlobSha256: sum}}, want: connect.CodeInvalidArgument, field: "parents", reason: "PARENTS_TOO_MANY"},

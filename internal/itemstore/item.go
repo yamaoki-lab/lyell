@@ -59,7 +59,7 @@ type Content struct {
 	Blob blobstore.Sum
 	// BlobSize は, blob のバイト数. 記録時は itemstore が blobstore から取得した値を入れるので, 渡された値は使用しない.
 	BlobSize int64
-	// Body は, revision の情報 (名前, メモ, content profile 等) を Protobuf で表したもの. itemstore は中身を解釈せず, 受け取ったバイト列をそのまま保存する. 空の Protobuf のメッセージは0バイトになるので, 空でもよい.
+	// Body は, revision の情報を lyell.storage.v1alpha1.RevisionBody で表したバイト列. revision の一次情報で, 上のフィールドはここから作り直せる. 記録する時は, itemstore が上のフィールドの値で Body の同じフィールドを上書きし, 他のフィールド (名前や, この Lyell が知らないもの) はそのまま残す. 空でもよい. 読み取り時には, 記録した body 全体が入る.
 	Body []byte
 }
 
@@ -156,15 +156,19 @@ func (s *Store) placeBlob(ctx context.Context, sum blobstore.Sum, data io.Reader
 }
 
 func insertRevision(ctx context.Context, tx *sql.Tx, id, itemID ID, c Content) error {
-	// Body が nil だと NULL (間引かれたことを示す値) として挿入されるので, 空の場合も必ず長さ0のバイト列として渡す.
-	body := c.Body
-	if body == nil {
-		body = []byte{}
+	body, err := encodeBody(c)
+	if err != nil {
+		return err
 	}
-	_, err := tx.ExecContext(ctx, `
+	// 列は c からではなく body から求める. 列と body が食い違わないようにするため.
+	cols, err := columnsFromBody(body)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `
 INSERT INTO revisions (id, item_id, created_at, author_user, author_machine, blob_sha256, blob_size, body)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		id[:], itemID[:], c.CreatedAt.UnixMilli(), c.AuthorUser, c.AuthorMachine, c.Blob[:], c.BlobSize, body)
+		id[:], itemID[:], cols.createdAt, cols.authorUser, cols.authorMachine, cols.blob, cols.blobSize, body)
 	return err
 }
 
@@ -308,6 +312,10 @@ func (c Content) validate() error {
 	}
 	if c.AuthorUser == "" || c.AuthorMachine == "" {
 		return fmt.Errorf("%w: 記録した利用者とマシン (AuthorUser, AuthorMachine) は両方必須です. 認証を経ない経路では anonymous にしてください", ErrInvalid)
+	}
+	// blob を書き込む前に弾けるよう, Body が読めるかもここで確かめる.
+	if _, err := encodeBody(c); err != nil {
+		return err
 	}
 	return nil
 }

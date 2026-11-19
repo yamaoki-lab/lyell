@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package lyell.storage.v1alpha1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/yamaoki-lab/lyell/gen/lyell/storage/v1alpha1;storagev1alpha1";
+
+// RevisionBody は, revision の body (revisions テーブルの body 列) に保存するデータの形式. revisions テーブルの他の中身の列 (created_at から blob_size まで) は, この body から作り直せる. API のメッセージ (lyell.api.v1alpha1) とは変更される理由も時期も異なるため, 分けて定義する.
+//
+// body はバイナリの Protobuf なので, フィールドは番号で識別される. 名前を変えても古い body は読めるが, 番号は使い回さない. この Lyell が知らないフィールドは, body を書き直す時も消さずに残す.
+message RevisionBody {
+  // create_time は, revision を記録した時刻. ミリ秒より細かい部分は切り捨てる.
+  google.protobuf.Timestamp create_time = 1;
+  // author_user は, 記録した利用者.
+  string author_user = 2;
+  // author_machine は, 記録したマシン.
+  string author_machine = 3;
+  // blob_sha256 は, 中身のバイト列 (blob) の SHA-256 (32 バイト).
+  bytes blob_sha256 = 4;
+  // blob_size は, 中身のバイト列のサイズ (バイト).
+  int64 blob_size = 5;
+  // name は, revision の名前. 空の時は, 名前が無い.
+  string name = 6;
+}

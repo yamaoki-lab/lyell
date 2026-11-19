@@ -51,4 +51,6 @@ message RevisionContent {
   string blob_sha256 = 4;
   // blob_size は, 中身のバイト列のサイズ (バイト). ファイルシステムとして見せる時に, バイト列を取得せずにサイズを答えるため.
   int64 blob_size = 5 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // name は, revision の名前. 空の場合は名前なしを表す. 名前の制約 (使用できる文字や長さ) はまだ検証しない.
+  string name = 6;
 }
