@@ -82,6 +82,12 @@ func wantCode(t *testing.T, name string, err error, want connect.Code) {
 // wantViolation は, err が INVALID_ARGUMENT で, 詳細情報の BadRequest に, field と reason の組が1つだけ入っていることを確かめる. reason が空なら, reason が設定されていないことを確かめる.
 func wantViolation(t *testing.T, name string, err error, field, reason string) {
 	t.Helper()
+	wantViolations(t, name, err, field, reason)
+}
+
+// wantViolations は, err が INVALID_ARGUMENT で, 詳細情報の BadRequest に, field の違反が reasons の順に入っていて, どれも description が空でないことを確かめる.
+func wantViolations(t *testing.T, name string, err error, field string, reasons ...string) {
+	t.Helper()
 	wantCode(t, name, err, connect.CodeInvalidArgument)
 	var ce *connect.Error
 	if !errors.As(err, &ce) {
@@ -95,8 +101,12 @@ func wantViolation(t *testing.T, name string, err error, field, reason string) {
 			}
 		}
 	}
-	if len(got) != 1 || got[0].GetField() != field || got[0].GetReason() != reason || got[0].GetDescription() == "" {
-		t.Errorf("%s の BadRequest = %v, want field %q, reason %q と空でない description の1件", name, got, field, reason)
+	ok := len(got) == len(reasons)
+	for i := 0; ok && i < len(got); i++ {
+		ok = got[i].GetField() == field && got[i].GetReason() == reasons[i] && got[i].GetDescription() != ""
+	}
+	if !ok {
+		t.Errorf("%s の BadRequest = %v, want field %q, reason %q で空でない description を持つ %d 件", name, got, field, reasons, len(reasons))
 	}
 }
 

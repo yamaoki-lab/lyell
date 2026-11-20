@@ -22,7 +22,7 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// FieldViolationReason は, ItemService が INVALID_ARGUMENT を返す時の拒否の理由.
+// FieldViolationReason は, ItemService が INVALID_ARGUMENT を返す時の拒否理由.
 // INVALID_ARGUMENT には詳細情報として google.rpc.BadRequest (AIP-193) を付与する. field_violations の field はリクエスト内のフィールドのパス (例: content.blob_sha256, parents[1]. 添字は0から数える), reason は値の名前から接頭辞 FIELD_VIOLATION_REASON_ を除いたもの (例: ID_MALFORMED), description は日本語の説明.
 // クライアントは reason で理由を判別し, 独自のメッセージを表示できる. filter と order_by の拒否には, まだ reason を設定しない.
 type FieldViolationReason int32
@@ -60,6 +60,18 @@ const (
 	FieldViolationReason_FIELD_VIOLATION_REASON_UPDATE_MASK_FIELD_UNKNOWN FieldViolationReason = 14
 	// FIELD_VIOLATION_REASON_REVISION_UNCHANGED は, 親が1つの revision の content が, 出力専用のフィールドを除いて expected_head の revision と同じであること. field は content. 親が2つ (統合) なら, 同じでも受け付ける.
 	FieldViolationReason_FIELD_VIOLATION_REASON_REVISION_UNCHANGED FieldViolationReason = 15
+	// FIELD_VIOLATION_REASON_NAME_FORBIDDEN_CHARACTER は, 名前が Windows のファイル名に使えない文字 (< > : " / \ | ? *) を含むこと. field は content.name. 以下の NAME_ で始まる理由はどれも, 自動修正の後の名前に対するもの.
+	FieldViolationReason_FIELD_VIOLATION_REASON_NAME_FORBIDDEN_CHARACTER FieldViolationReason = 16
+	// FIELD_VIOLATION_REASON_NAME_BIDI_CONTROL は, 名前が双方向テキストの制御文字 (U+202A から U+202E, U+2066 から U+2069) を含むこと. field は content.name.
+	FieldViolationReason_FIELD_VIOLATION_REASON_NAME_BIDI_CONTROL FieldViolationReason = 17
+	// FIELD_VIOLATION_REASON_NAME_TRAILING_PERIOD は, 名前がピリオドで終わること. field は content.name.
+	FieldViolationReason_FIELD_VIOLATION_REASON_NAME_TRAILING_PERIOD FieldViolationReason = 18
+	// FIELD_VIOLATION_REASON_NAME_RESERVED は, 名前が "." か "..", または Windows の予約名 (CON, PRN, AUX, NUL, COM1 から COM9, COM¹ から COM³, LPT1 から LPT9, LPT¹ から LPT³) であること. 予約名は大文字小文字を区別せず, NUL.txt のように拡張子が続く場合も含む. field は content.name.
+	FieldViolationReason_FIELD_VIOLATION_REASON_NAME_RESERVED FieldViolationReason = 19
+	// FIELD_VIOLATION_REASON_NAME_TOO_LONG は, 名前が NFC と NFD のどちらかで, UTF-8 で 255 バイトを超えること. field は content.name.
+	FieldViolationReason_FIELD_VIOLATION_REASON_NAME_TOO_LONG FieldViolationReason = 20
+	// FIELD_VIOLATION_REASON_NAME_BLANK は, 空でない名前が, 自動修正の後に空になること (空白だけの名前など). field は content.name.
+	FieldViolationReason_FIELD_VIOLATION_REASON_NAME_BLANK FieldViolationReason = 21
 )
 
 // Enum value maps for FieldViolationReason.
@@ -81,6 +93,12 @@ var (
 		13: "FIELD_VIOLATION_REASON_UPDATE_MASK_WILDCARD",
 		14: "FIELD_VIOLATION_REASON_UPDATE_MASK_FIELD_UNKNOWN",
 		15: "FIELD_VIOLATION_REASON_REVISION_UNCHANGED",
+		16: "FIELD_VIOLATION_REASON_NAME_FORBIDDEN_CHARACTER",
+		17: "FIELD_VIOLATION_REASON_NAME_BIDI_CONTROL",
+		18: "FIELD_VIOLATION_REASON_NAME_TRAILING_PERIOD",
+		19: "FIELD_VIOLATION_REASON_NAME_RESERVED",
+		20: "FIELD_VIOLATION_REASON_NAME_TOO_LONG",
+		21: "FIELD_VIOLATION_REASON_NAME_BLANK",
 	}
 	FieldViolationReason_value = map[string]int32{
 		"FIELD_VIOLATION_REASON_UNSPECIFIED":                   0,
@@ -99,6 +117,12 @@ var (
 		"FIELD_VIOLATION_REASON_UPDATE_MASK_WILDCARD":          13,
 		"FIELD_VIOLATION_REASON_UPDATE_MASK_FIELD_UNKNOWN":     14,
 		"FIELD_VIOLATION_REASON_REVISION_UNCHANGED":            15,
+		"FIELD_VIOLATION_REASON_NAME_FORBIDDEN_CHARACTER":      16,
+		"FIELD_VIOLATION_REASON_NAME_BIDI_CONTROL":             17,
+		"FIELD_VIOLATION_REASON_NAME_TRAILING_PERIOD":          18,
+		"FIELD_VIOLATION_REASON_NAME_RESERVED":                 19,
+		"FIELD_VIOLATION_REASON_NAME_TOO_LONG":                 20,
+		"FIELD_VIOLATION_REASON_NAME_BLANK":                    21,
 	}
 )
 
@@ -835,7 +859,7 @@ const file_lyell_api_v1alpha1_item_service_proto_rawDesc = "" +
 	"\x16CommitRevisionResponse\x128\n" +
 	"\brevision\x18\x01 \x01(\v2\x1c.lyell.api.v1alpha1.RevisionR\brevision\".\n" +
 	"\tHeadMoved\x12!\n" +
-	"\fcurrent_head\x18\x01 \x01(\tR\vcurrentHead*\x88\x06\n" +
+	"\fcurrent_head\x18\x01 \x01(\tR\vcurrentHead*\x97\b\n" +
 	"\x14FieldViolationReason\x12&\n" +
 	"\"FIELD_VIOLATION_REASON_UNSPECIFIED\x10\x00\x12'\n" +
 	"#FIELD_VIOLATION_REASON_ID_MALFORMED\x10\x01\x120\n" +
@@ -853,7 +877,13 @@ const file_lyell_api_v1alpha1_item_service_proto_rawDesc = "" +
 	"+FIELD_VIOLATION_REASON_BLOB_SHA256_REQUIRED\x10\f\x12/\n" +
 	"+FIELD_VIOLATION_REASON_UPDATE_MASK_WILDCARD\x10\r\x124\n" +
 	"0FIELD_VIOLATION_REASON_UPDATE_MASK_FIELD_UNKNOWN\x10\x0e\x12-\n" +
-	")FIELD_VIOLATION_REASON_REVISION_UNCHANGED\x10\x0f2\xf0\x03\n" +
+	")FIELD_VIOLATION_REASON_REVISION_UNCHANGED\x10\x0f\x123\n" +
+	"/FIELD_VIOLATION_REASON_NAME_FORBIDDEN_CHARACTER\x10\x10\x12,\n" +
+	"(FIELD_VIOLATION_REASON_NAME_BIDI_CONTROL\x10\x11\x12/\n" +
+	"+FIELD_VIOLATION_REASON_NAME_TRAILING_PERIOD\x10\x12\x12(\n" +
+	"$FIELD_VIOLATION_REASON_NAME_RESERVED\x10\x13\x12(\n" +
+	"$FIELD_VIOLATION_REASON_NAME_TOO_LONG\x10\x14\x12%\n" +
+	"!FIELD_VIOLATION_REASON_NAME_BLANK\x10\x152\xf0\x03\n" +
 	"\vItemService\x12[\n" +
 	"\n" +
 	"CreateItem\x12%.lyell.api.v1alpha1.CreateItemRequest\x1a&.lyell.api.v1alpha1.CreateItemResponse\x12W\n" +

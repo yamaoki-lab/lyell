@@ -2,12 +2,19 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"strings"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
+	"github.com/google/uuid"
 
 	apiv1alpha1 "github.com/yamaoki-lab/lyell/gen/lyell/api/v1alpha1"
 	"github.com/yamaoki-lab/lyell/gen/lyell/api/v1alpha1/apiv1alpha1connect"
+	"github.com/yamaoki-lab/lyell/internal/blobstore"
+	"github.com/yamaoki-lab/lyell/internal/itemname"
+	"github.com/yamaoki-lab/lyell/internal/itemstore"
 )
 
 // createNamed は, data を中身とし, name を名前とする asset を作成する.
@@ -92,4 +99,121 @@ func TestCommitRevision_RejectsSameBlobAndName(t *testing.T) {
 
 	// blob が同じでも, 名前が変われば変更として記録する.
 	commit(t, c, &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1.GetId(), Content: &apiv1alpha1.RevisionContent{BlobSha256: same, Name: "別の名前"}})
+}
+
+func TestNameReasons_EveryRuleHasReason(t *testing.T) {
+	for r := itemname.RuleForbiddenCharacter; r <= itemname.RuleBlank; r++ {
+		if nameReasons[r] == apiv1alpha1.FieldViolationReason_FIELD_VIOLATION_REASON_UNSPECIFIED {
+			t.Errorf("規則 %d の拒否理由がありません", r)
+		}
+	}
+}
+
+func TestRevisionName_IsFixedAndReturned(t *testing.T) {
+	s, c := newTestServer(t)
+	ctx := context.Background()
+
+	created := createNamed(t, s, c, "r1", " 撮影\u200Bの記録\t1 ")
+	if got := created.GetRevision().GetContent().GetName(); got != "撮影の記録 1" {
+		t.Errorf("CreateItem() の name = %+q, want %+q", got, "撮影の記録 1")
+	}
+	r2 := commit(t, c, &apiv1alpha1.CommitRevisionRequest{ItemId: created.GetItem().GetId(), ExpectedHead: created.GetRevision().GetId(), Content: &apiv1alpha1.RevisionContent{Name: "e\u0301\r\n"}})
+	if got := r2.GetContent().GetName(); got != "\u00E9" {
+		t.Errorf("CommitRevision() の name = %+q, want %+q", got, "\u00E9")
+	}
+	// 保存されるのも修正後の名前.
+	got, err := c.GetRevision(ctx, connect.NewRequest(&apiv1alpha1.GetRevisionRequest{Id: r2.GetId()}))
+	if err != nil {
+		t.Fatalf("GetRevision() error = %v, want nil", err)
+	}
+	if name := got.Msg.GetRevision().GetContent().GetName(); name != "\u00E9" {
+		t.Errorf("GetRevision() の name = %+q, want %+q", name, "\u00E9")
+	}
+}
+
+func TestRevisionName_RejectsEveryViolatedRule(t *testing.T) {
+	s, c := newTestServer(t)
+	ctx := context.Background()
+
+	_, err := c.CreateItem(ctx, connect.NewRequest(&apiv1alpha1.CreateItemRequest{Kind: apiv1alpha1.ItemKind_ITEM_KIND_ASSET, Content: &apiv1alpha1.RevisionContent{BlobSha256: putBlob(t, s, "r1"), Name: "nul.a:\u202E."}}))
+	wantViolations(t, "規則に違反する名前の CreateItem()", err, "content.name", "NAME_FORBIDDEN_CHARACTER", "NAME_BIDI_CONTROL", "NAME_TRAILING_PERIOD", "NAME_RESERVED")
+	list, err := c.ListItems(ctx, connect.NewRequest(&apiv1alpha1.ListItemsRequest{}))
+	if err != nil {
+		t.Fatalf("ListItems() error = %v, want nil", err)
+	}
+	if n := len(list.Msg.GetEntries()); n != 0 {
+		t.Errorf("拒否した後の item の数 = %d, want 0", n)
+	}
+
+	created := createNamed(t, s, c, "r1", "名前")
+	itemID, head := created.GetItem().GetId(), created.GetRevision().GetId()
+	tests := []struct {
+		name    string
+		content *apiv1alpha1.RevisionContent
+		mask    []string
+		reason  string
+	}{
+		{name: "長すぎる名前", content: &apiv1alpha1.RevisionContent{Name: strings.Repeat("a", 256)}, reason: "NAME_TOO_LONG"},
+		{name: "空白だけの名前", content: &apiv1alpha1.RevisionContent{Name: " \t "}, reason: "NAME_BLANK"},
+		{name: "update_mask に name を指定した空白だけの名前", content: &apiv1alpha1.RevisionContent{Name: " "}, mask: []string{"name"}, reason: "NAME_BLANK"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: head, Content: tt.content}
+			if tt.mask != nil {
+				req.UpdateMask = mask(tt.mask...)
+			}
+			_, err := c.CommitRevision(ctx, connect.NewRequest(req))
+			wantViolations(t, "CommitRevision()", err, "content.name", tt.reason)
+		})
+	}
+	item, err := c.GetItem(ctx, connect.NewRequest(&apiv1alpha1.GetItemRequest{Id: itemID}))
+	if err != nil {
+		t.Fatalf("GetItem() error = %v, want nil", err)
+	}
+	if got := item.Msg.GetItem().GetHead(); got != head {
+		t.Errorf("拒否した後の head = %s, want %s (変わらない)", got, head)
+	}
+}
+
+func TestCommitRevision_DoesNotRecheckInheritedName(t *testing.T) {
+	s, c := newTestServer(t)
+	ctx := context.Background()
+	item := createItem(t, s, c, "r1").GetItem()
+
+	// 規則が変わる前に記録された名前の代わりに, 規則に違反する名前の revision を, itemstore に直接記録する.
+	body, err := withName(nil, "a:b")
+	if err != nil {
+		t.Fatalf("withName() error = %v, want nil", err)
+	}
+	data := "r2"
+	r2, err := s.items.CommitRevision(ctx, itemstore.NewRevision{
+		ItemID: itemstore.ID(uuid.MustParse(item.GetId())), From: itemstore.ID(uuid.MustParse(item.GetHead())),
+		Content: itemstore.Content{CreatedAt: time.Now(), AuthorUser: "old", AuthorMachine: "old", Blob: blobstore.Sum(sha256.Sum256([]byte(data))), Body: body},
+		Data:    strings.NewReader(data),
+	})
+	if err != nil {
+		t.Fatalf("itemstore の CommitRevision() error = %v, want nil", err)
+	}
+
+	r3 := commit(t, c, &apiv1alpha1.CommitRevisionRequest{ItemId: item.GetId(), ExpectedHead: r2.String(), Content: &apiv1alpha1.RevisionContent{BlobSha256: putBlob(t, s, "r3")}})
+	if got := r3.GetContent().GetName(); got != "a:b" {
+		t.Errorf("引き継いだ name = %q, want %q", got, "a:b")
+	}
+
+	// update_mask に含まれない name は変更しないので, 規則に違反していても確かめない.
+	r4 := commit(t, c, &apiv1alpha1.CommitRevisionRequest{ItemId: item.GetId(), ExpectedHead: r3.GetId(), Content: &apiv1alpha1.RevisionContent{BlobSha256: putBlob(t, s, "r4"), Name: "c:d"}, UpdateMask: mask("blob_sha256")})
+	if got := r4.GetContent().GetName(); got != "a:b" {
+		t.Errorf("update_mask に name を含めない更新の後の name = %q, want %q", got, "a:b")
+	}
+}
+
+func TestCommitRevision_ComparesFixedName(t *testing.T) {
+	s, c := newTestServer(t)
+	created := createNamed(t, s, c, "r1", "名前")
+	r1 := created.GetRevision()
+
+	// 修正すると同じ名前になるなら, 変更のない revision として拒否する.
+	_, err := c.CommitRevision(context.Background(), connect.NewRequest(&apiv1alpha1.CommitRevisionRequest{ItemId: created.GetItem().GetId(), ExpectedHead: r1.GetId(), Content: &apiv1alpha1.RevisionContent{BlobSha256: r1.GetContent().GetBlobSha256(), Name: " 名前\u200B"}}))
+	wantViolation(t, "修正すると同じ名前になる CommitRevision()", err, "content", "REVISION_UNCHANGED")
 }
