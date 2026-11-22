@@ -114,16 +114,18 @@ func replaceByte(s string, i int) string {
 func TestListItems_RejectsBadRequest(t *testing.T) {
 	_, c := newTestServer(t)
 	tests := []struct {
-		name string
-		req  *apiv1alpha1.ListItemsRequest
-		// order_by の reason はまだ設定しない.
+		name          string
+		req           *apiv1alpha1.ListItemsRequest
 		field, reason string
 	}{
 		{name: "負の page_size", req: &apiv1alpha1.ListItemsRequest{PageSize: -1}, field: "page_size", reason: "PAGE_SIZE_NEGATIVE"},
-		{name: "item.id 以外の並び順", req: &apiv1alpha1.ListItemsRequest{OrderBy: "item.kind"}, field: "order_by"},
-		{name: "並び順のフィールドが2つ", req: &apiv1alpha1.ListItemsRequest{OrderBy: "item.id, item.id desc"}, field: "order_by"},
-		{name: "order_by の形式が不正", req: &apiv1alpha1.ListItemsRequest{OrderBy: "item.id up"}, field: "order_by"},
-		{name: "asc", req: &apiv1alpha1.ListItemsRequest{OrderBy: "item.id asc"}, field: "order_by"},
+		{name: "並び順のフィールド名の誤記", req: &apiv1alpha1.ListItemsRequest{OrderBy: "item.idd"}, field: "order_by", reason: "ORDER_BY_FIELD_UNKNOWN"},
+		{name: "途中が ItemEntry にない並び順のフィールド", req: &apiv1alpha1.ListItemsRequest{OrderBy: "head_revision.contents.name"}, field: "order_by", reason: "ORDER_BY_FIELD_UNKNOWN"},
+		{name: "item.id 以外の並び順", req: &apiv1alpha1.ListItemsRequest{OrderBy: "item.kind"}, field: "order_by", reason: "ORDER_BY_FIELD_UNSUPPORTED"},
+		{name: "入れ子の並び順のフィールド", req: &apiv1alpha1.ListItemsRequest{OrderBy: "head_revision.content.create_time desc"}, field: "order_by", reason: "ORDER_BY_FIELD_UNSUPPORTED"},
+		{name: "並び順のフィールドが2つ", req: &apiv1alpha1.ListItemsRequest{OrderBy: "item.id, item.id desc"}, field: "order_by", reason: "ORDER_BY_TOO_MANY_FIELDS"},
+		{name: "order_by の構文が不正", req: &apiv1alpha1.ListItemsRequest{OrderBy: "item.id up"}, field: "order_by", reason: "ORDER_BY_SYNTAX"},
+		{name: "asc", req: &apiv1alpha1.ListItemsRequest{OrderBy: "item.id asc"}, field: "order_by", reason: "ORDER_BY_SYNTAX"},
 	}
 	for _, tt := range tests {
 		_, err := c.ListItems(context.Background(), connect.NewRequest(tt.req))
@@ -174,22 +176,36 @@ func TestListItems_RejectsUnsupportedFilter(t *testing.T) {
 	tests := []struct {
 		name   string
 		filter string
+		reason string
 	}{
-		{name: "宣言していないフィールド", filter: `head_revision.content.author_user = "user"`},
-		{name: "item. を付けない", filter: "kind = ITEM_KIND_ASSET"},
-		{name: "OR", filter: "item.kind = ITEM_KIND_ASSET OR item.kind = ITEM_KIND_COLLECTION"},
-		{name: "NOT", filter: "NOT item.kind = ITEM_KIND_ASSET"},
-		{name: "!=", filter: "item.kind != ITEM_KIND_ASSET"},
-		{name: "kind を2回", filter: "item.kind = ITEM_KIND_ASSET AND item.kind = ITEM_KIND_ASSET"},
-		{name: "UNSPECIFIED", filter: "item.kind = ITEM_KIND_UNSPECIFIED"},
-		{name: "時刻の形式が不正", filter: `head_revision.content.create_time >= "yesterday"`},
-		{name: "時刻を = で比較", filter: `head_revision.content.create_time = "2026-10-01T00:00:00Z"`},
-		{name: "構文が不正", filter: "item.kind = ("},
+		{name: "構文が不正", filter: "item.kind = (", reason: "FILTER_SYNTAX"},
+		{name: "フィールド名の誤記", filter: "item.knid = ITEM_KIND_ASSET", reason: "FILTER_FIELD_UNKNOWN"},
+		{name: "item. を付けない", filter: "kind = ITEM_KIND_ASSET", reason: "FILTER_FIELD_UNKNOWN"},
+		{name: "途中が ItemEntry にない", filter: `head_revision.contents.name = "a"`, reason: "FILTER_FIELD_UNKNOWN"},
+		{name: "メッセージでないフィールドの下", filter: "item.kind.number = 1", reason: "FILTER_FIELD_UNKNOWN"},
+		{name: "まだ使えない item.id", filter: `item.id = "a"`, reason: "FILTER_FIELD_UNSUPPORTED"},
+		{name: "まだ使えない名前", filter: `head_revision.content.name = "a"`, reason: "FILTER_FIELD_UNSUPPORTED"},
+		{name: "まだ使えない作成者", filter: `head_revision.content.author_user = "user"`, reason: "FILTER_FIELD_UNSUPPORTED"},
+		{name: "まだ使えない入れ子のフィールド", filter: "head_revision.content.create_time.seconds > 0", reason: "FILTER_FIELD_UNSUPPORTED"},
+		{name: "OR", filter: "item.kind = ITEM_KIND_ASSET OR item.kind = ITEM_KIND_COLLECTION", reason: "FILTER_OPERATOR_UNSUPPORTED"},
+		{name: "NOT", filter: "NOT item.kind = ITEM_KIND_ASSET", reason: "FILTER_OPERATOR_UNSUPPORTED"},
+		{name: "!=", filter: "item.kind != ITEM_KIND_ASSET", reason: "FILTER_OPERATOR_UNSUPPORTED"},
+		{name: "has", filter: "item.kind:ITEM_KIND_ASSET", reason: "FILTER_OPERATOR_UNSUPPORTED"},
+		{name: "比較でない式", filter: "ITEM_KIND_ASSET", reason: "FILTER_OPERATOR_UNSUPPORTED"},
+		{name: "左辺がフィールドでない", filter: `"a" = item.kind`, reason: "FILTER_OPERATOR_UNSUPPORTED"},
+		{name: "kind を < で比較", filter: "item.kind < ITEM_KIND_COLLECTION", reason: "FILTER_OPERATOR_UNSUPPORTED"},
+		{name: "時刻を = で比較", filter: `head_revision.content.create_time = "2026-10-01T00:00:00Z"`, reason: "FILTER_OPERATOR_UNSUPPORTED"},
+		{name: "UNSPECIFIED", filter: "item.kind = ITEM_KIND_UNSPECIFIED", reason: "FILTER_VALUE_INVALID"},
+		{name: "ItemKind にない値", filter: "item.kind = ITEM_KIND_FOLDER", reason: "FILTER_VALUE_INVALID"},
+		{name: "kind を文字列と比較", filter: `item.kind = "ITEM_KIND_ASSET"`, reason: "FILTER_VALUE_INVALID"},
+		{name: "時刻の形式が不正", filter: `head_revision.content.create_time >= "yesterday"`, reason: "FILTER_VALUE_INVALID"},
+		{name: "timestamp 関数の時刻の形式が不正", filter: `head_revision.content.create_time >= timestamp("yesterday")`, reason: "FILTER_VALUE_INVALID"},
+		{name: "時刻を数値と比較", filter: "head_revision.content.create_time >= 0", reason: "FILTER_VALUE_INVALID"},
+		{name: "kind を2回指定", filter: "item.kind = ITEM_KIND_ASSET AND item.kind = ITEM_KIND_ASSET", reason: "FILTER_FIELD_REPEATED"},
 	}
 	for _, tt := range tests {
 		_, err := c.ListItems(context.Background(), connect.NewRequest(&apiv1alpha1.ListItemsRequest{Filter: tt.filter}))
-		// filter の reason はまだ設定しない.
-		wantViolation(t, tt.name, err, "filter", "")
+		wantViolation(t, tt.name, err, "filter", tt.reason)
 	}
 }
 

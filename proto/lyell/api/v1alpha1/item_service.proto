@@ -144,7 +144,7 @@ message HeadMoved {
 
 // FieldViolationReason は, ItemService が INVALID_ARGUMENT を返す時の拒否理由.
 // INVALID_ARGUMENT には詳細情報として google.rpc.BadRequest (AIP-193) を付与する. field_violations の field はリクエスト内のフィールドのパス (例: content.blob_sha256, parents[1]. 添字は0から数える), reason は値の名前から接頭辞 FIELD_VIOLATION_REASON_ を除いたもの (例: ID_MALFORMED), description は日本語の説明.
-// クライアントは reason で理由を判別し, 独自のメッセージを表示できる. filter と order_by の拒否には, まだ reason を設定しない.
+// クライアントは reason で理由を判別し, 独自のメッセージを表示できる.
 enum FieldViolationReason {
   // FIELD_VIOLATION_REASON_UNSPECIFIED は使用しない.
   FIELD_VIOLATION_REASON_UNSPECIFIED = 0;
@@ -190,4 +190,24 @@ enum FieldViolationReason {
   FIELD_VIOLATION_REASON_NAME_TOO_LONG = 20;
   // FIELD_VIOLATION_REASON_NAME_BLANK は, 空でない名前が, 自動修正の後に空になること (空白だけの名前など). field は content.name.
   FIELD_VIOLATION_REASON_NAME_BLANK = 21;
+  // FIELD_VIOLATION_REASON_FILTER_SYNTAX は, filter が AIP-160 の構文に従っていないこと. field は filter. 以下の FILTER_ で始まる理由の field はどれも filter.
+  FIELD_VIOLATION_REASON_FILTER_SYNTAX = 22;
+  // FIELD_VIOLATION_REASON_FILTER_FIELD_UNKNOWN は, filter のフィールドパスが ItemEntry に存在しないこと (フィールド名の誤記など).
+  FIELD_VIOLATION_REASON_FILTER_FIELD_UNKNOWN = 23;
+  // FIELD_VIOLATION_REASON_FILTER_FIELD_UNSUPPORTED は, filter のフィールドパスは ItemEntry に存在するが, まだ絞り込みに使えないこと (item.id など).
+  FIELD_VIOLATION_REASON_FILTER_FIELD_UNSUPPORTED = 24;
+  // FIELD_VIOLATION_REASON_FILTER_OPERATOR_UNSUPPORTED は, 使用できない演算子 (OR, NOT, != など) か, そのフィールドでは使えない演算子を指定していること. 比較か, 比較を AND で結合したもの以外の式も含む.
+  FIELD_VIOLATION_REASON_FILTER_OPERATOR_UNSUPPORTED = 25;
+  // FIELD_VIOLATION_REASON_FILTER_VALUE_INVALID は, 比較の値がフィールドに合わないこと. 型の合わない値, ITEM_KIND_ASSET と ITEM_KIND_COLLECTION 以外の item.kind, RFC 3339 の文字列でない時刻を含む.
+  FIELD_VIOLATION_REASON_FILTER_VALUE_INVALID = 26;
+  // FIELD_VIOLATION_REASON_FILTER_FIELD_REPEATED は, item.kind を2回以上指定していること.
+  FIELD_VIOLATION_REASON_FILTER_FIELD_REPEATED = 27;
+  // FIELD_VIOLATION_REASON_ORDER_BY_SYNTAX は, order_by が AIP-132 の構文に従っていないこと. AIP-132 に定義のない "asc" も含む. field は order_by. 以下の ORDER_BY_ で始まる理由の field はどれも order_by.
+  FIELD_VIOLATION_REASON_ORDER_BY_SYNTAX = 28;
+  // FIELD_VIOLATION_REASON_ORDER_BY_FIELD_UNKNOWN は, order_by のフィールドパスが ItemEntry に存在しないこと.
+  FIELD_VIOLATION_REASON_ORDER_BY_FIELD_UNKNOWN = 29;
+  // FIELD_VIOLATION_REASON_ORDER_BY_FIELD_UNSUPPORTED は, order_by のフィールドパスは ItemEntry に存在するが, まだ並び順に使えないこと (item.kind など).
+  FIELD_VIOLATION_REASON_ORDER_BY_FIELD_UNSUPPORTED = 30;
+  // FIELD_VIOLATION_REASON_ORDER_BY_TOO_MANY_FIELDS は, order_by に2つ以上のフィールドを指定していること.
+  FIELD_VIOLATION_REASON_ORDER_BY_TOO_MANY_FIELDS = 31;
 }

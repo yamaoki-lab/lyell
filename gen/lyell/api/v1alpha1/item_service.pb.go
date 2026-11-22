@@ -24,7 +24,7 @@ const (
 
 // FieldViolationReason は, ItemService が INVALID_ARGUMENT を返す時の拒否理由.
 // INVALID_ARGUMENT には詳細情報として google.rpc.BadRequest (AIP-193) を付与する. field_violations の field はリクエスト内のフィールドのパス (例: content.blob_sha256, parents[1]. 添字は0から数える), reason は値の名前から接頭辞 FIELD_VIOLATION_REASON_ を除いたもの (例: ID_MALFORMED), description は日本語の説明.
-// クライアントは reason で理由を判別し, 独自のメッセージを表示できる. filter と order_by の拒否には, まだ reason を設定しない.
+// クライアントは reason で理由を判別し, 独自のメッセージを表示できる.
 type FieldViolationReason int32
 
 const (
@@ -72,6 +72,26 @@ const (
 	FieldViolationReason_FIELD_VIOLATION_REASON_NAME_TOO_LONG FieldViolationReason = 20
 	// FIELD_VIOLATION_REASON_NAME_BLANK は, 空でない名前が, 自動修正の後に空になること (空白だけの名前など). field は content.name.
 	FieldViolationReason_FIELD_VIOLATION_REASON_NAME_BLANK FieldViolationReason = 21
+	// FIELD_VIOLATION_REASON_FILTER_SYNTAX は, filter が AIP-160 の構文に従っていないこと. field は filter. 以下の FILTER_ で始まる理由の field はどれも filter.
+	FieldViolationReason_FIELD_VIOLATION_REASON_FILTER_SYNTAX FieldViolationReason = 22
+	// FIELD_VIOLATION_REASON_FILTER_FIELD_UNKNOWN は, filter のフィールドパスが ItemEntry に存在しないこと (フィールド名の誤記など).
+	FieldViolationReason_FIELD_VIOLATION_REASON_FILTER_FIELD_UNKNOWN FieldViolationReason = 23
+	// FIELD_VIOLATION_REASON_FILTER_FIELD_UNSUPPORTED は, filter のフィールドパスは ItemEntry に存在するが, まだ絞り込みに使えないこと (item.id など).
+	FieldViolationReason_FIELD_VIOLATION_REASON_FILTER_FIELD_UNSUPPORTED FieldViolationReason = 24
+	// FIELD_VIOLATION_REASON_FILTER_OPERATOR_UNSUPPORTED は, 使用できない演算子 (OR, NOT, != など) か, そのフィールドでは使えない演算子を指定していること. 比較か, 比較を AND で結合したもの以外の式も含む.
+	FieldViolationReason_FIELD_VIOLATION_REASON_FILTER_OPERATOR_UNSUPPORTED FieldViolationReason = 25
+	// FIELD_VIOLATION_REASON_FILTER_VALUE_INVALID は, 比較の値がフィールドに合わないこと. 型の合わない値, ITEM_KIND_ASSET と ITEM_KIND_COLLECTION 以外の item.kind, RFC 3339 の文字列でない時刻を含む.
+	FieldViolationReason_FIELD_VIOLATION_REASON_FILTER_VALUE_INVALID FieldViolationReason = 26
+	// FIELD_VIOLATION_REASON_FILTER_FIELD_REPEATED は, item.kind を2回以上指定していること.
+	FieldViolationReason_FIELD_VIOLATION_REASON_FILTER_FIELD_REPEATED FieldViolationReason = 27
+	// FIELD_VIOLATION_REASON_ORDER_BY_SYNTAX は, order_by が AIP-132 の構文に従っていないこと. AIP-132 に定義のない "asc" も含む. field は order_by. 以下の ORDER_BY_ で始まる理由の field はどれも order_by.
+	FieldViolationReason_FIELD_VIOLATION_REASON_ORDER_BY_SYNTAX FieldViolationReason = 28
+	// FIELD_VIOLATION_REASON_ORDER_BY_FIELD_UNKNOWN は, order_by のフィールドパスが ItemEntry に存在しないこと.
+	FieldViolationReason_FIELD_VIOLATION_REASON_ORDER_BY_FIELD_UNKNOWN FieldViolationReason = 29
+	// FIELD_VIOLATION_REASON_ORDER_BY_FIELD_UNSUPPORTED は, order_by のフィールドパスは ItemEntry に存在するが, まだ並び順に使えないこと (item.kind など).
+	FieldViolationReason_FIELD_VIOLATION_REASON_ORDER_BY_FIELD_UNSUPPORTED FieldViolationReason = 30
+	// FIELD_VIOLATION_REASON_ORDER_BY_TOO_MANY_FIELDS は, order_by に2つ以上のフィールドを指定していること.
+	FieldViolationReason_FIELD_VIOLATION_REASON_ORDER_BY_TOO_MANY_FIELDS FieldViolationReason = 31
 )
 
 // Enum value maps for FieldViolationReason.
@@ -99,6 +119,16 @@ var (
 		19: "FIELD_VIOLATION_REASON_NAME_RESERVED",
 		20: "FIELD_VIOLATION_REASON_NAME_TOO_LONG",
 		21: "FIELD_VIOLATION_REASON_NAME_BLANK",
+		22: "FIELD_VIOLATION_REASON_FILTER_SYNTAX",
+		23: "FIELD_VIOLATION_REASON_FILTER_FIELD_UNKNOWN",
+		24: "FIELD_VIOLATION_REASON_FILTER_FIELD_UNSUPPORTED",
+		25: "FIELD_VIOLATION_REASON_FILTER_OPERATOR_UNSUPPORTED",
+		26: "FIELD_VIOLATION_REASON_FILTER_VALUE_INVALID",
+		27: "FIELD_VIOLATION_REASON_FILTER_FIELD_REPEATED",
+		28: "FIELD_VIOLATION_REASON_ORDER_BY_SYNTAX",
+		29: "FIELD_VIOLATION_REASON_ORDER_BY_FIELD_UNKNOWN",
+		30: "FIELD_VIOLATION_REASON_ORDER_BY_FIELD_UNSUPPORTED",
+		31: "FIELD_VIOLATION_REASON_ORDER_BY_TOO_MANY_FIELDS",
 	}
 	FieldViolationReason_value = map[string]int32{
 		"FIELD_VIOLATION_REASON_UNSPECIFIED":                   0,
@@ -123,6 +153,16 @@ var (
 		"FIELD_VIOLATION_REASON_NAME_RESERVED":                 19,
 		"FIELD_VIOLATION_REASON_NAME_TOO_LONG":                 20,
 		"FIELD_VIOLATION_REASON_NAME_BLANK":                    21,
+		"FIELD_VIOLATION_REASON_FILTER_SYNTAX":                 22,
+		"FIELD_VIOLATION_REASON_FILTER_FIELD_UNKNOWN":          23,
+		"FIELD_VIOLATION_REASON_FILTER_FIELD_UNSUPPORTED":      24,
+		"FIELD_VIOLATION_REASON_FILTER_OPERATOR_UNSUPPORTED":   25,
+		"FIELD_VIOLATION_REASON_FILTER_VALUE_INVALID":          26,
+		"FIELD_VIOLATION_REASON_FILTER_FIELD_REPEATED":         27,
+		"FIELD_VIOLATION_REASON_ORDER_BY_SYNTAX":               28,
+		"FIELD_VIOLATION_REASON_ORDER_BY_FIELD_UNKNOWN":        29,
+		"FIELD_VIOLATION_REASON_ORDER_BY_FIELD_UNSUPPORTED":    30,
+		"FIELD_VIOLATION_REASON_ORDER_BY_TOO_MANY_FIELDS":      31,
 	}
 )
 
@@ -859,7 +899,7 @@ const file_lyell_api_v1alpha1_item_service_proto_rawDesc = "" +
 	"\x16CommitRevisionResponse\x128\n" +
 	"\brevision\x18\x01 \x01(\v2\x1c.lyell.api.v1alpha1.RevisionR\brevision\".\n" +
 	"\tHeadMoved\x12!\n" +
-	"\fcurrent_head\x18\x01 \x01(\tR\vcurrentHead*\x97\b\n" +
+	"\fcurrent_head\x18\x01 \x01(\tR\vcurrentHead*\x8d\f\n" +
 	"\x14FieldViolationReason\x12&\n" +
 	"\"FIELD_VIOLATION_REASON_UNSPECIFIED\x10\x00\x12'\n" +
 	"#FIELD_VIOLATION_REASON_ID_MALFORMED\x10\x01\x120\n" +
@@ -883,7 +923,17 @@ const file_lyell_api_v1alpha1_item_service_proto_rawDesc = "" +
 	"+FIELD_VIOLATION_REASON_NAME_TRAILING_PERIOD\x10\x12\x12(\n" +
 	"$FIELD_VIOLATION_REASON_NAME_RESERVED\x10\x13\x12(\n" +
 	"$FIELD_VIOLATION_REASON_NAME_TOO_LONG\x10\x14\x12%\n" +
-	"!FIELD_VIOLATION_REASON_NAME_BLANK\x10\x152\xf0\x03\n" +
+	"!FIELD_VIOLATION_REASON_NAME_BLANK\x10\x15\x12(\n" +
+	"$FIELD_VIOLATION_REASON_FILTER_SYNTAX\x10\x16\x12/\n" +
+	"+FIELD_VIOLATION_REASON_FILTER_FIELD_UNKNOWN\x10\x17\x123\n" +
+	"/FIELD_VIOLATION_REASON_FILTER_FIELD_UNSUPPORTED\x10\x18\x126\n" +
+	"2FIELD_VIOLATION_REASON_FILTER_OPERATOR_UNSUPPORTED\x10\x19\x12/\n" +
+	"+FIELD_VIOLATION_REASON_FILTER_VALUE_INVALID\x10\x1a\x120\n" +
+	",FIELD_VIOLATION_REASON_FILTER_FIELD_REPEATED\x10\x1b\x12*\n" +
+	"&FIELD_VIOLATION_REASON_ORDER_BY_SYNTAX\x10\x1c\x121\n" +
+	"-FIELD_VIOLATION_REASON_ORDER_BY_FIELD_UNKNOWN\x10\x1d\x125\n" +
+	"1FIELD_VIOLATION_REASON_ORDER_BY_FIELD_UNSUPPORTED\x10\x1e\x123\n" +
+	"/FIELD_VIOLATION_REASON_ORDER_BY_TOO_MANY_FIELDS\x10\x1f2\xf0\x03\n" +
 	"\vItemService\x12[\n" +
 	"\n" +
 	"CreateItem\x12%.lyell.api.v1alpha1.CreateItemRequest\x1a&.lyell.api.v1alpha1.CreateItemResponse\x12W\n" +
