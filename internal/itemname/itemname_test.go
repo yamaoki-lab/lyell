@@ -186,3 +186,57 @@ func TestCheck_DescriptionNamesCharacters(t *testing.T) {
 		t.Errorf("双方向テキストの制御文字の説明 = %q, want U+202E を含む", d)
 	}
 }
+
+func TestSuggest(t *testing.T) {
+	stem := strings.Repeat("a", 250)
+	suffix := "." + strings.Repeat("a", 251)
+	zwjStem := strings.Repeat("a", 247)
+	ivsStem := strings.Repeat("a", 248)
+	zwj := "👨\u200D👩"
+	ivs := "葛\U000E0100"
+	tests := []struct {
+		name, in, want string
+		ok             bool
+	}{
+		{"予約名の末尾に下線を足す", "CON", "CON_", true},
+		{"予約名の最初のピリオドの前に下線を足す", "NUL.txt", "NUL_.txt", true},
+		{"末尾のピリオドを下線にする", "メモ.", "メモ_", true},
+		{"末尾のピリオドの最後の1つだけを下線にする", "メモ...", "メモ.._", true},
+		{"ピリオド1つを下線にする", ".", "_", true},
+		{"ピリオド2つのうち末尾だけを下線にする", "..", "._", true},
+		{"末尾のピリオドを先に直して予約名の修正が不要になる", "CON.", "CON_", true},
+		{"末尾のピリオドを直した後も予約名なら下線を足す", "NUL.txt.", "NUL_.txt_", true},
+		{"禁止文字をそれぞれ下線にする", `a<>:"/\|?*b`, "a_________b", true},
+		{"双方向テキストの制御文字を消す", "a\u202A\u202E\u2066\u2069b", "ab", true},
+		{"最後のピリオドから始まる拡張子を残す", stem + "3号館の廊下 v1.2 final.ply", stem + "3.ply", true},
+		{"先頭のピリオドだけなら拡張子なしとして短くする", "." + strings.Repeat("a", MaxBytes), "." + strings.Repeat("a", MaxBytes-1), true},
+		{"拡張子のない長い名前を短くする", strings.Repeat("a", MaxBytes+1), strings.Repeat("a", MaxBytes), true},
+		{"NFC で収まっても NFD で超える名前を短くする", strings.Repeat("é", 86), strings.Repeat("é", 85), true},
+		{"ZWJ シーケンスの途中で切らない", zwjStem + zwj + ".ply", zwjStem + ".ply", true},
+		{"異体字セレクタの直前で切らない", ivsStem + ivs + ".ply", ivsStem + ".ply", true},
+		{"双方向テキストの制御文字を消した前後で文字を合成する", strings.Repeat("a", 252) + "e\u202E\u0301", strings.Repeat("a", 252) + "é", true},
+		{"禁止文字と双方向テキストの制御文字と末尾のピリオドと予約名を直す", "NU\u202EL.a?.", "NUL_.a__", true},
+		{"空白を取り除いて現れる予約名を次の反復で直す", "\u202E CON.txt", "CON_.txt", true},
+		{"自動修正の後に空なら候補なし", " \u200B ", "", false},
+		{"双方向テキストの制御文字を消して空なら候補なし", "\u202E", "", false},
+		{"双方向テキストの制御文字を消して空白だけが残っても候補なし", "\u202E \u2066", "", false},
+		{"拡張子の前に書記素クラスタを残せなければ候補なし", "a." + strings.Repeat("a", MaxBytes-1), "", false},
+		{"拡張子の前の1文字で NFD の上限を超えれば候補なし", "é." + strings.Repeat("a", MaxBytes-3), "", false},
+		{"予約名を直して短くすると同じ予約名に戻るなら候補なし", "CONx" + suffix, "", false},
+		{"違反がなければ自動修正後の名前を返す", "\u200B e\u0301 ", "é", true},
+		{"最初から名前なしなら空の名前を返す", "", "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := Suggest(tt.in)
+			if got != tt.want || ok != tt.ok {
+				t.Errorf("Suggest(%+q) = %+q, %t, want %+q, %t", tt.in, got, ok, tt.want, tt.ok)
+			}
+			if ok {
+				if fixed, vs := Check(got); fixed != got || len(vs) != 0 {
+					t.Errorf("Check(%+q) = %+q, %v, want 変更なし, 違反なし", got, fixed, rules(vs))
+				}
+			}
+		})
+	}
+}

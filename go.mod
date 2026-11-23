@@ -6,6 +6,7 @@ toolchain go1.27.3
 
 require (
 	connectrpc.com/connect v1.21.1
+	github.com/clipperhouse/uax29/v2 v2.7.0
 	github.com/google/uuid v1.6.0
 	go.einride.tech/aip v0.86.3
 	golang.org/x/text v0.44.0
