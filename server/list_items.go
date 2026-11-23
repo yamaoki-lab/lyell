@@ -70,20 +70,29 @@ func pageSize(n int32) (int, error) {
 	return min(int(n), maxPageSize), nil
 }
 
+// orderFieldID は, ListItems の order_by で使えるフィールド. フィールドパスは ItemEntry を起点とする.
+const orderFieldID = "item.id"
+
 // parseItemOrder は, order_by (AIP-132) を itemstore の並び順に変換する. 現在は item.id のみ指定できる. 空の場合は新しい順とする.
 func parseItemOrder(s string) (itemstore.Order, error) {
 	// ordering は "asc" も受け付けるが, AIP-132 で規定されているのは "desc" のみであるため拒否する. 同一の並び順を表す指定方法を一意に保つため.
 	for _, field := range strings.Split(s, ",") {
 		if parts := strings.Fields(field); len(parts) == 2 && parts[1] == "asc" {
-			return 0, errors.New(`"asc" は指定できません. 古い順は "item.id" と指定してください`)
+			return 0, reject(apiv1alpha1.FieldViolationReason_FIELD_VIOLATION_REASON_ORDER_BY_SYNTAX, fmt.Errorf(`"asc" は指定できません. 古い順は %q と指定してください`, orderFieldID))
 		}
 	}
 	var ob ordering.OrderBy
 	if err := ob.UnmarshalString(s); err != nil {
-		return 0, err
+		return 0, reject(apiv1alpha1.FieldViolationReason_FIELD_VIOLATION_REASON_ORDER_BY_SYNTAX, err)
 	}
-	if err := ob.ValidateForPaths("item.id"); err != nil {
-		return 0, fmt.Errorf("%w (現在は item.id のみ指定できます)", err)
+	for _, f := range ob.Fields {
+		switch {
+		case f.Path == orderFieldID:
+		case !itemEntryHasField(f.Path):
+			return 0, reject(apiv1alpha1.FieldViolationReason_FIELD_VIOLATION_REASON_ORDER_BY_FIELD_UNKNOWN, fmt.Errorf("%s は ItemEntry にないフィールドです", f.Path))
+		default:
+			return 0, reject(apiv1alpha1.FieldViolationReason_FIELD_VIOLATION_REASON_ORDER_BY_FIELD_UNSUPPORTED, fmt.Errorf("%s はまだ並び順に使用できません (使用できるのは %s のみです)", f.Path, orderFieldID))
+		}
 	}
 	switch len(ob.Fields) {
 	case 0:
@@ -94,7 +103,7 @@ func parseItemOrder(s string) (itemstore.Order, error) {
 		}
 		return itemstore.OrderIDAscending, nil
 	}
-	return 0, errors.New("並び順に指定できるフィールドは1つのみです")
+	return 0, reject(apiv1alpha1.FieldViolationReason_FIELD_VIOLATION_REASON_ORDER_BY_TOO_MANY_FIELDS, errors.New("並び順に指定できるフィールドは1つのみです"))
 }
 
 // page token は, 続きの位置 (前ページの末尾の item の ID) と, リクエスト条件の checksum を base64 エンコードしたもの. クライアントには中身を公開しない (AIP-158).
