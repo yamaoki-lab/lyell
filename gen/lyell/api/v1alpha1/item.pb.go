@@ -228,7 +228,7 @@ type RevisionContent struct {
 	BlobSize int64 `protobuf:"varint,5,opt,name=blob_size,json=blobSize,proto3" json:"blob_size,omitempty"`
 	// name は, revision の名前. 空の場合は名前なしを表す. 名前はエクスポートやマウントの際にそのままファイル名になるため, どの一般的なファイルシステムでも変更なしに受け入れられる名前だけを受け付ける.
 	// CreateItem または CommitRevision で名前を設定すると, 見た目を変えない修正を自動で施して保存し, レスポンスでは修正後の名前を返す. 修正は, ゼロ幅スペース (U+200B), BOM (U+FEFF), ソフトハイフン (U+00AD) および制御文字の削除, 改行とタブの1つのスペースへの置き換え, 前後の空白の除去, NFC への正規化 (CJK 互換漢字は字体を保つためそのまま残す) である.
-	// 修正後の名前が規則を満たさなければ, INVALID_ARGUMENT を返す. 満たさない規則はすべて, FieldViolationReason の NAME_ で始まる理由として示す. expected_head から引き継いだ名前は, 確かめ直さない.
+	// 修正後の名前が規則を満たさなければ, INVALID_ARGUMENT を返す. 満たさない規則はすべて, FieldViolationReason の NAME_ で始まる理由として示す. 名前の候補を作成できる場合は, BadRequest と共に詳細情報に NameSuggestion を付与する. expected_head から引き継いだ名前は, 再検証しない.
 	Name          string `protobuf:"bytes,6,opt,name=name,proto3" json:"name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

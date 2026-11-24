@@ -810,7 +810,7 @@ func (x *CommitRevisionResponse) GetRevision() *Revision {
 	return nil
 }
 
-// HeadMoved は, CommitRevision が ABORTED を返す時に付与する詳細情報. 呼び出し元は, 再取得せずに現在の head を取得し, 分岐の解決へ進めることができる.
+// HeadMoved は, CommitRevision が ABORTED を返す際に付与する詳細情報. 呼び出し元は, 再取得せずに現在の head を取得し, 分岐の解決へ進めることができる.
 type HeadMoved struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// current_head は, リクエストが拒否された時点の item の head.
@@ -852,6 +852,52 @@ func (*HeadMoved) Descriptor() ([]byte, []int) {
 func (x *HeadMoved) GetCurrentHead() string {
 	if x != nil {
 		return x.CurrentHead
+	}
+	return ""
+}
+
+// NameSuggestion は, CreateItem または CommitRevision が content.name を拒否した際, 候補を作成できた場合にのみ付与する詳細情報.
+type NameSuggestion struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// name は, 拒否された名前の規則違反をすべて修正した候補.
+	Name          string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *NameSuggestion) Reset() {
+	*x = NameSuggestion{}
+	mi := &file_lyell_api_v1alpha1_item_service_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NameSuggestion) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NameSuggestion) ProtoMessage() {}
+
+func (x *NameSuggestion) ProtoReflect() protoreflect.Message {
+	mi := &file_lyell_api_v1alpha1_item_service_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NameSuggestion.ProtoReflect.Descriptor instead.
+func (*NameSuggestion) Descriptor() ([]byte, []int) {
+	return file_lyell_api_v1alpha1_item_service_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *NameSuggestion) GetName() string {
+	if x != nil {
+		return x.Name
 	}
 	return ""
 }
@@ -899,7 +945,9 @@ const file_lyell_api_v1alpha1_item_service_proto_rawDesc = "" +
 	"\x16CommitRevisionResponse\x128\n" +
 	"\brevision\x18\x01 \x01(\v2\x1c.lyell.api.v1alpha1.RevisionR\brevision\".\n" +
 	"\tHeadMoved\x12!\n" +
-	"\fcurrent_head\x18\x01 \x01(\tR\vcurrentHead*\x8d\f\n" +
+	"\fcurrent_head\x18\x01 \x01(\tR\vcurrentHead\"$\n" +
+	"\x0eNameSuggestion\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name*\x8d\f\n" +
 	"\x14FieldViolationReason\x12&\n" +
 	"\"FIELD_VIOLATION_REASON_UNSPECIFIED\x10\x00\x12'\n" +
 	"#FIELD_VIOLATION_REASON_ID_MALFORMED\x10\x01\x120\n" +
@@ -955,7 +1003,7 @@ func file_lyell_api_v1alpha1_item_service_proto_rawDescGZIP() []byte {
 }
 
 var file_lyell_api_v1alpha1_item_service_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_lyell_api_v1alpha1_item_service_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
+var file_lyell_api_v1alpha1_item_service_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
 var file_lyell_api_v1alpha1_item_service_proto_goTypes = []any{
 	(FieldViolationReason)(0),      // 0: lyell.api.v1alpha1.FieldViolationReason
 	(*CreateItemRequest)(nil),      // 1: lyell.api.v1alpha1.CreateItemRequest
@@ -970,25 +1018,26 @@ var file_lyell_api_v1alpha1_item_service_proto_goTypes = []any{
 	(*CommitRevisionRequest)(nil),  // 10: lyell.api.v1alpha1.CommitRevisionRequest
 	(*CommitRevisionResponse)(nil), // 11: lyell.api.v1alpha1.CommitRevisionResponse
 	(*HeadMoved)(nil),              // 12: lyell.api.v1alpha1.HeadMoved
-	(ItemKind)(0),                  // 13: lyell.api.v1alpha1.ItemKind
-	(*RevisionContent)(nil),        // 14: lyell.api.v1alpha1.RevisionContent
-	(*Item)(nil),                   // 15: lyell.api.v1alpha1.Item
-	(*Revision)(nil),               // 16: lyell.api.v1alpha1.Revision
-	(*fieldmaskpb.FieldMask)(nil),  // 17: google.protobuf.FieldMask
+	(*NameSuggestion)(nil),         // 13: lyell.api.v1alpha1.NameSuggestion
+	(ItemKind)(0),                  // 14: lyell.api.v1alpha1.ItemKind
+	(*RevisionContent)(nil),        // 15: lyell.api.v1alpha1.RevisionContent
+	(*Item)(nil),                   // 16: lyell.api.v1alpha1.Item
+	(*Revision)(nil),               // 17: lyell.api.v1alpha1.Revision
+	(*fieldmaskpb.FieldMask)(nil),  // 18: google.protobuf.FieldMask
 }
 var file_lyell_api_v1alpha1_item_service_proto_depIdxs = []int32{
-	13, // 0: lyell.api.v1alpha1.CreateItemRequest.kind:type_name -> lyell.api.v1alpha1.ItemKind
-	14, // 1: lyell.api.v1alpha1.CreateItemRequest.content:type_name -> lyell.api.v1alpha1.RevisionContent
-	15, // 2: lyell.api.v1alpha1.CreateItemResponse.item:type_name -> lyell.api.v1alpha1.Item
-	16, // 3: lyell.api.v1alpha1.CreateItemResponse.revision:type_name -> lyell.api.v1alpha1.Revision
-	15, // 4: lyell.api.v1alpha1.GetItemResponse.item:type_name -> lyell.api.v1alpha1.Item
+	14, // 0: lyell.api.v1alpha1.CreateItemRequest.kind:type_name -> lyell.api.v1alpha1.ItemKind
+	15, // 1: lyell.api.v1alpha1.CreateItemRequest.content:type_name -> lyell.api.v1alpha1.RevisionContent
+	16, // 2: lyell.api.v1alpha1.CreateItemResponse.item:type_name -> lyell.api.v1alpha1.Item
+	17, // 3: lyell.api.v1alpha1.CreateItemResponse.revision:type_name -> lyell.api.v1alpha1.Revision
+	16, // 4: lyell.api.v1alpha1.GetItemResponse.item:type_name -> lyell.api.v1alpha1.Item
 	7,  // 5: lyell.api.v1alpha1.ListItemsResponse.entries:type_name -> lyell.api.v1alpha1.ItemEntry
-	15, // 6: lyell.api.v1alpha1.ItemEntry.item:type_name -> lyell.api.v1alpha1.Item
-	16, // 7: lyell.api.v1alpha1.ItemEntry.head_revision:type_name -> lyell.api.v1alpha1.Revision
-	16, // 8: lyell.api.v1alpha1.GetRevisionResponse.revision:type_name -> lyell.api.v1alpha1.Revision
-	14, // 9: lyell.api.v1alpha1.CommitRevisionRequest.content:type_name -> lyell.api.v1alpha1.RevisionContent
-	17, // 10: lyell.api.v1alpha1.CommitRevisionRequest.update_mask:type_name -> google.protobuf.FieldMask
-	16, // 11: lyell.api.v1alpha1.CommitRevisionResponse.revision:type_name -> lyell.api.v1alpha1.Revision
+	16, // 6: lyell.api.v1alpha1.ItemEntry.item:type_name -> lyell.api.v1alpha1.Item
+	17, // 7: lyell.api.v1alpha1.ItemEntry.head_revision:type_name -> lyell.api.v1alpha1.Revision
+	17, // 8: lyell.api.v1alpha1.GetRevisionResponse.revision:type_name -> lyell.api.v1alpha1.Revision
+	15, // 9: lyell.api.v1alpha1.CommitRevisionRequest.content:type_name -> lyell.api.v1alpha1.RevisionContent
+	18, // 10: lyell.api.v1alpha1.CommitRevisionRequest.update_mask:type_name -> google.protobuf.FieldMask
+	17, // 11: lyell.api.v1alpha1.CommitRevisionResponse.revision:type_name -> lyell.api.v1alpha1.Revision
 	1,  // 12: lyell.api.v1alpha1.ItemService.CreateItem:input_type -> lyell.api.v1alpha1.CreateItemRequest
 	3,  // 13: lyell.api.v1alpha1.ItemService.GetItem:input_type -> lyell.api.v1alpha1.GetItemRequest
 	5,  // 14: lyell.api.v1alpha1.ItemService.ListItems:input_type -> lyell.api.v1alpha1.ListItemsRequest
@@ -1018,7 +1067,7 @@ func file_lyell_api_v1alpha1_item_service_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_lyell_api_v1alpha1_item_service_proto_rawDesc), len(file_lyell_api_v1alpha1_item_service_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   12,
+			NumMessages:   13,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
