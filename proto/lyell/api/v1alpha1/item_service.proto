@@ -136,10 +136,16 @@ message CommitRevisionResponse {
   Revision revision = 1;
 }
 
-// HeadMoved は, CommitRevision が ABORTED を返す時に付与する詳細情報. 呼び出し元は, 再取得せずに現在の head を取得し, 分岐の解決へ進めることができる.
+// HeadMoved は, CommitRevision が ABORTED を返す際に付与する詳細情報. 呼び出し元は, 再取得せずに現在の head を取得し, 分岐の解決へ進めることができる.
 message HeadMoved {
   // current_head は, リクエストが拒否された時点の item の head.
   string current_head = 1;
+}
+
+// NameSuggestion は, CreateItem または CommitRevision が content.name を拒否した際, 候補を作成できた場合にのみ付与する詳細情報.
+message NameSuggestion {
+  // name は, 拒否された名前の規則違反をすべて修正した候補.
+  string name = 1;
 }
 
 // FieldViolationReason は, ItemService が INVALID_ARGUMENT を返す時の拒否理由.
