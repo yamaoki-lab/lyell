@@ -95,18 +95,10 @@ type NewItem struct {
 //
 // 先に blob を書き込み (書き込みが完了した時点でディスクに永続化されている), その後で item と revision を1つのトランザクションで記録する. 逆の順にすると, 記録した後にクラッシュした場合に, 存在しない blob を指す revision が残る. この順なら, 途中でクラッシュしても孤立した blob が残るだけで, 後の GC で回収できる.
 func (s *Store) CreateItem(ctx context.Context, n NewItem) (Item, error) {
-	kind, content := n.Kind, n.Content
-	if err := kind.validate(); err != nil {
-		return Item{}, err
-	}
-	if err := content.validate(); err != nil {
-		return Item{}, err
-	}
-	size, err := s.placeBlob(ctx, content.Blob, n.Data, n.PutOptions)
+	content, err := s.prepareNewItem(ctx, n, true)
 	if err != nil {
 		return Item{}, err
 	}
-	content.BlobSize = size
 	itemID, err := NewID()
 	if err != nil {
 		return Item{}, err
@@ -123,7 +115,7 @@ func (s *Store) CreateItem(ctx context.Context, n NewItem) (Item, error) {
 	defer func() { _ = tx.Rollback() }() // Commit 済みの場合は何も行わない
 
 	// items と revisions は互いを参照するが, 外部キーの検査はコミット時に行われるので, 挿入の順序は問わない.
-	if _, err := tx.ExecContext(ctx, "INSERT INTO items (id, kind, head) VALUES (?, ?, ?)", itemID[:], string(kind), revID[:]); err != nil {
+	if _, err := tx.ExecContext(ctx, "INSERT INTO items (id, kind, head) VALUES (?, ?, ?)", itemID[:], string(n.Kind), revID[:]); err != nil {
 		return Item{}, err
 	}
 	if err := insertRevision(ctx, tx, revID, itemID, content); err != nil {
@@ -133,7 +125,31 @@ func (s *Store) CreateItem(ctx context.Context, n NewItem) (Item, error) {
 	if err := tx.Commit(); err != nil {
 		return Item{}, err
 	}
-	return Item{ID: itemID, Kind: kind, Head: revID}, nil
+	return Item{ID: itemID, Kind: n.Kind, Head: revID}, nil
+}
+
+// ValidateCreateItem は, CreateItem の入力を検証し, 最初の revision の中身を返す. hasBlob が false なら blob の検証を省略する.
+func (s *Store) ValidateCreateItem(ctx context.Context, kind Kind, content Content, hasBlob bool) (Content, error) {
+	return s.prepareNewItem(ctx, NewItem{Kind: kind, Content: content}, hasBlob)
+}
+
+func (s *Store) prepareNewItem(ctx context.Context, n NewItem, hasBlob bool) (Content, error) {
+	if err := n.Kind.validate(); err != nil {
+		return Content{}, err
+	}
+	if err := n.Content.validate(); err != nil {
+		return Content{}, err
+	}
+	content := n.Content
+	content.BlobSize = 0
+	if hasBlob {
+		size, err := s.placeBlob(ctx, content.Blob, n.Data, n.PutOptions)
+		if err != nil {
+			return Content{}, err
+		}
+		content.BlobSize = size
+	}
+	return content, nil
 }
 
 // placeBlob は, 記録の前に blob が存在することを確認し, そのサイズを返す. data があれば先に書き込み, nil なら保存済みの blob を使う. CreateItem と CommitRevision で共通の処理.

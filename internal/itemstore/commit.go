@@ -1,11 +1,13 @@
 package itemstore
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 
 	"github.com/yamaoki-lab/lyell/internal/blobstore"
 )
@@ -15,7 +17,7 @@ import (
 // CommitRevision は *NotFastForwardError を返し, errors.Is(err, ErrNotFastForward) は真になる. 現在の head が必要な時は errors.As で取り出す.
 var ErrNotFastForward = errors.New("itemstore: 早送り (fast-forward) ではありません")
 
-// NotFastForwardError は, CommitRevision が早送りでないために拒否した時のエラー. 拒否した時点の head を持つので, 呼び出し側は読み直さずに統合の処理へ進める.
+// NotFastForwardError は, CommitRevision が早送りでないために拒否した時のエラー. 拒否した時点の head を持つため, 呼び出し側は読み直さずに統合の処理へ進める.
 type NotFastForwardError struct {
 	ItemID ID
 	From   ID // 呼び出し側が前提とした head
@@ -53,21 +55,10 @@ type NewRevision struct {
 //
 // 中身のバイト列 (blob) は, CreateItem と同じく, 先に書き込んでから記録する. 拒否した時や記録に失敗した時は, 書き込んだ blob が孤立して残る. どこからも参照されない blob は無害で, 後の GC で回収できる.
 func (s *Store) CommitRevision(ctx context.Context, r NewRevision) (ID, error) {
-	itemID, from, parents, content := r.ItemID, r.From, r.Parents, r.Content
-	if len(parents) == 0 {
-		parents = []ID{from}
-	}
-	if err := content.validate(); err != nil {
-		return ID{}, err
-	}
-	if err := validateParents(from, parents); err != nil {
-		return ID{}, err
-	}
-	size, err := s.placeBlob(ctx, content.Blob, r.Data, r.PutOptions)
+	r, err := s.prepareRevision(ctx, r)
 	if err != nil {
 		return ID{}, err
 	}
-	content.BlobSize = size
 	revID, err := NewID()
 	if err != nil {
 		return ID{}, err
@@ -80,53 +71,96 @@ func (s *Store) CommitRevision(ctx context.Context, r NewRevision) (ID, error) {
 	}
 	defer func() { _ = tx.Rollback() }() // Commit の後は何もしない
 
-	if err := insertRevision(ctx, tx, revID, itemID, content); err != nil {
+	if err := validateRevisionTarget(ctx, tx, r); err != nil {
 		return ID{}, err
 	}
-	for _, p := range parents {
-		// 存在しない親は外部キーの制約でも拒否されるが, そのエラーは DB の故障と区別できないので, 先に確認して ErrNotFound を返す.
-		var exists bool
-		if err := tx.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM revisions WHERE id = ?)", p[:]).Scan(&exists); err != nil {
-			return ID{}, err
-		}
-		if !exists {
-			return ID{}, fmt.Errorf("親 revision %s: %w", p, ErrNotFound)
-		}
+	if err := insertRevision(ctx, tx, revID, r.ItemID, r.Content); err != nil {
+		return ID{}, err
+	}
+	for _, p := range r.Parents {
 		if _, err := tx.ExecContext(ctx, "INSERT INTO revision_parents (revision_id, parent_id) VALUES (?, ?)", revID[:], p[:]); err != nil {
 			return ID{}, fmt.Errorf("親 %s を記録できませんでした: %w", p, err)
 		}
 	}
 
-	// compare-and-swap: head が from のままの時だけ進める. 読み取って比較してから書き込むと, その間に他の書き込みによって進められた head を上書きしうるので, 比較と書き込みを1つの SQL 文で行う.
-	res, err := tx.ExecContext(ctx, "UPDATE items SET head = ? WHERE id = ? AND head = ?", revID[:], itemID[:], from[:])
-	if err != nil {
+	// 検証から更新まで同じトランザクション内で書き込みロックを保持するため, 他の書き込みがその間に head を進めることはない.
+	if _, err := tx.ExecContext(ctx, "UPDATE items SET head = ? WHERE id = ?", revID[:], r.ItemID[:]); err != nil {
 		return ID{}, err
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return ID{}, err
-	}
-	if n == 0 {
-		// 追加した revision は Rollback で取り消される. 書き込みロックを保持したまま読み取るので, 読み取った head は拒否した時点のものである.
-		var head []byte
-		err := tx.QueryRowContext(ctx, "SELECT head FROM items WHERE id = ?", itemID[:]).Scan(&head)
-		if errors.Is(err, sql.ErrNoRows) {
-			return ID{}, fmt.Errorf("item %s: %w", itemID, ErrNotFound)
-		}
-		if err != nil {
-			return ID{}, err
-		}
-		e := &NotFastForwardError{ItemID: itemID, From: from}
-		if err := scanID(head, &e.Head); err != nil {
-			return ID{}, err
-		}
-		return ID{}, e
 	}
 
 	if err := tx.Commit(); err != nil {
 		return ID{}, err
 	}
 	return revID, nil
+}
+
+// ValidateCommitRevision は, CommitRevision の入力を読み取りトランザクションで検証し, 保存される revision の中身と親を返す. blob は保存済みである必要があり, Data と PutOptions は使用しない.
+func (s *Store) ValidateCommitRevision(ctx context.Context, r NewRevision) (Revision, error) {
+	tx, err := s.read.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return Revision{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	r.Data = nil
+	r, err = s.prepareRevision(ctx, r)
+	if err != nil {
+		return Revision{}, err
+	}
+	if err := validateRevisionTarget(ctx, tx, r); err != nil {
+		return Revision{}, err
+	}
+	// Revision と同じく, 親は ID 順で返す.
+	parents := slices.Clone(r.Parents)
+	slices.SortFunc(parents, func(a, b ID) int { return bytes.Compare(a[:], b[:]) })
+	return Revision{ItemID: r.ItemID, Parents: parents, Content: &r.Content}, nil
+}
+
+func (s *Store) prepareRevision(ctx context.Context, r NewRevision) (NewRevision, error) {
+	if len(r.Parents) == 0 {
+		r.Parents = []ID{r.From}
+	}
+	if err := r.Content.validate(); err != nil {
+		return NewRevision{}, err
+	}
+	if err := validateParents(r.From, r.Parents); err != nil {
+		return NewRevision{}, err
+	}
+	size, err := s.placeBlob(ctx, r.Content.Blob, r.Data, r.PutOptions)
+	if err != nil {
+		return NewRevision{}, err
+	}
+	r.Content.BlobSize = size
+	return r, nil
+}
+
+// validateRevisionTarget は, 同じスナップショットで親の存在と現在の head を検証する.
+func validateRevisionTarget(ctx context.Context, tx *sql.Tx, r NewRevision) error {
+	for _, p := range r.Parents {
+		var exists bool
+		if err := tx.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM revisions WHERE id = ?)", p[:]).Scan(&exists); err != nil {
+			return err
+		}
+		if !exists {
+			return fmt.Errorf("親 revision %s: %w", p, ErrNotFound)
+		}
+	}
+	var raw []byte
+	err := tx.QueryRowContext(ctx, "SELECT head FROM items WHERE id = ?", r.ItemID[:]).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("item %s: %w", r.ItemID, ErrNotFound)
+	}
+	if err != nil {
+		return err
+	}
+	var head ID
+	if err := scanID(raw, &head); err != nil {
+		return err
+	}
+	if head != r.From {
+		return &NotFastForwardError{ItemID: r.ItemID, From: r.From, Head: head}
+	}
+	return nil
 }
 
 // maxParents は, 1つの revision が持てる parents の数の上限. fast-forward の parents は1つ, 統合の parents は2つで, 3つ以上を一度に統合する操作は存在しない. 上限が無いと, 1回の CommitRevision で大量の parents を記録でき, その間は唯一の書き込み接続を占有し続ける.

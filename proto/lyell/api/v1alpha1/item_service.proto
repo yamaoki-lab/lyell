@@ -12,7 +12,7 @@ option go_package = "github.com/yamaoki-lab/lyell/gen/lyell/api/v1alpha1;apiv1al
 // 中身のバイト列 (blob) は, この RPC とは別に, 通常の HTTP で /lyell/api/v1alpha1/blobs/sha256/<hex> に保存および取得する. RPC では SHA-256 のみを受け渡す.
 service ItemService {
   // CreateItem は, item を, 保存済みの blob を指す最初の revision と共に作成する. 現在は asset のみを作成できる.
-  // blob が存在しなければ, FAILED_PRECONDITION を返す.
+  // blob_sha256 を指定した際に blob が存在しなければ, FAILED_PRECONDITION を返す.
   rpc CreateItem(CreateItemRequest) returns (CreateItemResponse);
 
   // GetItem は, item を返す. 存在しなければ NOT_FOUND を返す.
@@ -44,15 +44,17 @@ message CreateItemRequest {
 
   // kind は item の種類. 現在は ITEM_KIND_ASSET のみを受け付ける.
   ItemKind kind = 1;
-  // content は, 最初の revision の中身. blob_sha256 は必須で, blob を事前に保存しておく必要がある. name は省略でき, 省略すると名前の無い revision になる. 出力専用のフィールドは, 設定しても無視する.
+  // content は, 最初の revision の中身. blob_sha256 は validate_only が true の場合に限り省略できる. 指定する場合は, blob を事前に保存しておく必要がある. name は省略でき, 省略すると名前のない revision になる. 出力専用のフィールドは, 設定しても無視する.
   RevisionContent content = 3;
+  // validate_only が true なら, リクエストを検証し, 何も保存せずにレスポンスを返す. blob_sha256 を省略した場合は blob の検証を省略する. 検証に失敗した場合は, validate_only が false の場合と同じエラーと詳細情報を返す.
+  bool validate_only = 4;
 }
 
 // CreateItemResponse は, CreateItem のレスポンス.
 message CreateItemResponse {
-  // item は, 作成した item.
+  // item は, 作成した item. validate_only が true の場合, id と head は空になる.
   Item item = 1;
-  // revision は, 作成した最初の revision.
+  // revision は, 作成した最初の revision. validate_only が true の場合, id, item_id, content.create_time は空になる. リクエストで blob_sha256 を省略した場合は, content.blob_sha256 と content.blob_size も空になる.
   Revision revision = 2;
 }
 
@@ -128,11 +130,13 @@ message CommitRevisionRequest {
   // update_mask は, content のうち変更するフィールド (AIP-134). パスには content 内のフィールド名 (例: blob_sha256) を指定する. 省略するか空の場合は, content で値が設定されているフィールドを変更する.
   // 値を空にしたフィールドを指定すると, そのフィールドを消去する. ただし blob_sha256 は消去できず, INVALID_ARGUMENT になる. ワイルドカード "*" や存在しないフィールド名も INVALID_ARGUMENT になる. 出力専用のフィールドは, 指定しても無視する.
   google.protobuf.FieldMask update_mask = 6;
+  // validate_only が true なら, リクエストを検証し, 何も保存せずにレスポンスを返す. 検証に失敗した場合は, validate_only が false の場合と同じエラーと詳細情報を返す.
+  bool validate_only = 7;
 }
 
 // CommitRevisionResponse は, CommitRevision のレスポンス.
 message CommitRevisionResponse {
-  // revision は, 追加した revision. item の head は, この revision の ID へ進められる.
+  // revision は, 追加した revision. item の head は, この revision の ID へ進められる. validate_only が true の場合, id と content.create_time は空になり, item の head は変わらない.
   Revision revision = 1;
 }
 

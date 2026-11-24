@@ -188,6 +188,9 @@ func TestCreateItem_RejectsBadRequest(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := c.CreateItem(ctx, connect.NewRequest(tt.req))
+			if tt.reason != "BLOB_SHA256_REQUIRED" {
+				wantCreateValidationError(t, c, tt.req, err)
+			}
 			if tt.want == connect.CodeInvalidArgument {
 				wantViolation(t, "CreateItem()", err, tt.field, tt.reason)
 				return
@@ -267,8 +270,10 @@ func TestCommitRevision_StaleHeadIsAbortedWithHeadMoved(t *testing.T) {
 	r2 := res.Msg.GetRevision().GetId()
 
 	// head は r2 に進んでいるが, 古い r1 を前提として追加しようとする.
-	_, err = c.CommitRevision(ctx, connect.NewRequest(&apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Content: &apiv1alpha1.RevisionContent{BlobSha256: putBlob(t, s, "stale")}}))
+	stale := &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Content: &apiv1alpha1.RevisionContent{BlobSha256: putBlob(t, s, "stale")}}
+	_, err = c.CommitRevision(ctx, connect.NewRequest(stale))
 	wantCode(t, "古い head を前提とした CommitRevision()", err, connect.CodeAborted)
+	wantCommitValidationError(t, c, stale, err)
 
 	// 呼び出し側が読み直さずに現在の head を取得できるよう, 詳細に HeadMoved が付いている.
 	var ce *connect.Error
@@ -370,6 +375,7 @@ func TestCommitRevision_RejectsUnchanged(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := c.CommitRevision(ctx, connect.NewRequest(tt.req))
 			wantViolation(t, "CommitRevision()", err, "content", "REVISION_UNCHANGED")
+			wantCommitValidationError(t, c, tt.req, err)
 		})
 	}
 
@@ -412,8 +418,10 @@ func TestCommitRevision_ThinnedExpectedHead(t *testing.T) {
 		thinRevision(t, filepath.Join(dir, "lyell.db"), r1)
 
 		// 変更しないフィールドがあると, 引き継ぎ元の中身が無いので記録できない.
-		_, err := c.CommitRevision(ctx, connect.NewRequest(&apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1}))
+		req := &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1}
+		_, err := c.CommitRevision(ctx, connect.NewRequest(req))
 		wantCode(t, "間引かれた head から引き継ぐ CommitRevision()", err, connect.CodeFailedPrecondition)
+		wantCommitValidationError(t, c, req, err)
 		// blob_sha256 だけを指定しても, name を引き継ぐので記録できない.
 		_, err = c.CommitRevision(ctx, connect.NewRequest(&apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1, Content: &apiv1alpha1.RevisionContent{BlobSha256: putBlob(t, s, "r2")}}))
 		wantCode(t, "間引かれた head から name を引き継ぐ CommitRevision()", err, connect.CodeFailedPrecondition)
@@ -428,8 +436,10 @@ func TestCommitRevision_ThinnedExpectedHead(t *testing.T) {
 		thinRevision(t, filepath.Join(dir, "lyell.db"), r1)
 
 		// 古い expected_head が間引かれていても, 早送りでない時と同じく ABORTED と現在の head を返す.
-		_, err := c.CommitRevision(ctx, connect.NewRequest(&apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1}))
+		req := &apiv1alpha1.CommitRevisionRequest{ItemId: itemID, ExpectedHead: r1}
+		_, err := c.CommitRevision(ctx, connect.NewRequest(req))
 		wantCode(t, "間引かれた古い head から引き継ぐ CommitRevision()", err, connect.CodeAborted)
+		wantCommitValidationError(t, c, req, err)
 		var ce *connect.Error
 		if !errors.As(err, &ce) {
 			t.Fatalf("error = %T, want *connect.Error", err)
@@ -484,6 +494,7 @@ func TestCommitRevision_ErrorCodes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := c.CommitRevision(ctx, connect.NewRequest(tt.req))
+			wantCommitValidationError(t, c, tt.req, err)
 			if tt.want == connect.CodeInvalidArgument {
 				wantViolation(t, "CommitRevision()", err, tt.field, tt.reason)
 				return

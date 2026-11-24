@@ -137,13 +137,17 @@ func TestRevisionName_RejectsEveryViolatedRule(t *testing.T) {
 	ctx := context.Background()
 
 	sum := putBlob(t, s, "r1")
-	_, err := c.CreateItem(ctx, connect.NewRequest(&apiv1alpha1.CreateItemRequest{Kind: apiv1alpha1.ItemKind_ITEM_KIND_ASSET, Content: &apiv1alpha1.RevisionContent{BlobSha256: sum, Name: "nul.a:\u202E."}}))
+	create := &apiv1alpha1.CreateItemRequest{Kind: apiv1alpha1.ItemKind_ITEM_KIND_ASSET, Content: &apiv1alpha1.RevisionContent{BlobSha256: sum, Name: "nul.a:\u202E."}}
+	_, err := c.CreateItem(ctx, connect.NewRequest(create))
 	wantViolations(t, "規則に違反する名前の CreateItem()", err, "content.name", "NAME_FORBIDDEN_CHARACTER", "NAME_BIDI_CONTROL", "NAME_TRAILING_PERIOD", "NAME_RESERVED")
 	wantNameSuggestion(t, err, "nul_.a__")
+	wantCreateValidationError(t, c, create, err)
 
-	_, err = c.CreateItem(ctx, connect.NewRequest(&apiv1alpha1.CreateItemRequest{Kind: apiv1alpha1.ItemKind_ITEM_KIND_ASSET, Content: &apiv1alpha1.RevisionContent{BlobSha256: sum, Name: " "}}))
+	create.Content.Name = " "
+	_, err = c.CreateItem(ctx, connect.NewRequest(create))
 	wantViolation(t, "名前が空白のみの CreateItem()", err, "content.name", "NAME_BLANK")
 	wantNameSuggestion(t, err, "")
+	wantCreateValidationError(t, c, create, err)
 
 	list, err := c.ListItems(ctx, connect.NewRequest(&apiv1alpha1.ListItemsRequest{}))
 	if err != nil {
@@ -175,6 +179,7 @@ func TestRevisionName_RejectsEveryViolatedRule(t *testing.T) {
 			_, err := c.CommitRevision(ctx, connect.NewRequest(req))
 			wantViolations(t, "CommitRevision()", err, "content.name", tt.reason)
 			wantNameSuggestion(t, err, tt.suggestion)
+			wantCommitValidationError(t, c, req, err)
 		})
 	}
 	item, err := c.GetItem(ctx, connect.NewRequest(&apiv1alpha1.GetItemRequest{Id: itemID}))
