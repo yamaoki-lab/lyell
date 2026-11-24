@@ -29,9 +29,14 @@ func (s *itemService) CreateItem(ctx context.Context, req *connect.Request[apiv1
 	if err != nil {
 		return nil, invalidArgument("kind", err)
 	}
-	sum, err := parseSum(req.Msg.GetContent().GetBlobSha256())
-	if err != nil {
-		return nil, invalidArgument("content.blob_sha256", err)
+	sha := req.Msg.GetContent().GetBlobSha256()
+	hasBlob := sha != ""
+	var sum blobstore.Sum
+	if hasBlob || !req.Msg.GetValidateOnly() {
+		sum, err = parseSum(sha)
+		if err != nil {
+			return nil, invalidArgument("content.blob_sha256", err)
+		}
 	}
 	name, err := checkName(req.Msg.GetContent().GetName())
 	if err != nil {
@@ -41,7 +46,24 @@ func (s *itemService) CreateItem(ctx context.Context, req *connect.Request[apiv1
 	if err != nil {
 		return nil, s.connectError(ctx, err)
 	}
-	item, err := s.items.CreateItem(ctx, itemstore.NewItem{Kind: kind, Content: newContent(ctx, sum, body)})
+	content := newContent(ctx, sum, body)
+	if req.Msg.GetValidateOnly() {
+		content, err = s.items.ValidateCreateItem(ctx, kind, content, hasBlob)
+		if err != nil {
+			return nil, s.connectError(ctx, err)
+		}
+		item := itemToProto(itemstore.Item{Kind: kind})
+		item.Id, item.Head = "", ""
+		preview := contentToProto(&content)
+		preview.CreateTime = nil
+		if !hasBlob {
+			preview.BlobSha256 = ""
+		}
+		return connect.NewResponse(&apiv1alpha1.CreateItemResponse{
+			Item: item, Revision: &apiv1alpha1.Revision{Content: preview},
+		}), nil
+	}
+	item, err := s.items.CreateItem(ctx, itemstore.NewItem{Kind: kind, Content: content})
 	if err != nil {
 		return nil, s.connectError(ctx, err)
 	}
@@ -138,7 +160,17 @@ func (s *itemService) CommitRevision(ctx context.Context, req *connect.Request[a
 	if !merge && head != nil && sameInput(contentToProto(head), &apiv1alpha1.RevisionContent{BlobSha256: sum.String(), Name: name}) {
 		return nil, invalidArgument("content", reject(apiv1alpha1.FieldViolationReason_FIELD_VIOLATION_REASON_REVISION_UNCHANGED, errors.New("expected_head の revision と中身が同じです. 統合でなければ, 変更のない revision は記録できません")))
 	}
-	revID, err := s.items.CommitRevision(ctx, itemstore.NewRevision{ItemID: itemID, From: from, Parents: parents, Content: newContent(ctx, sum, body)})
+	input := itemstore.NewRevision{ItemID: itemID, From: from, Parents: parents, Content: newContent(ctx, sum, body)}
+	if req.Msg.GetValidateOnly() {
+		rev, err := s.items.ValidateCommitRevision(ctx, input)
+		if err != nil {
+			return nil, s.connectError(ctx, err)
+		}
+		preview := revisionToProto(rev)
+		preview.Id, preview.Content.CreateTime = "", nil
+		return connect.NewResponse(&apiv1alpha1.CommitRevisionResponse{Revision: preview}), nil
+	}
+	revID, err := s.items.CommitRevision(ctx, input)
 	if err != nil {
 		return nil, s.connectError(ctx, err)
 	}
