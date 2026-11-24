@@ -58,16 +58,25 @@ func Check(name string) (string, []Violation) {
 	if cs := matching(fixed, isBidiControl); cs != nil {
 		vs = append(vs, Violation{Rule: RuleBidiControl, Description: fmt.Sprintf("双方向テキストの制御文字 %s を含みます", strings.Join(cs, ", "))})
 	}
-	if strings.HasSuffix(fixed, ".") {
+	if hasTrailingPeriod(fixed) {
 		vs = append(vs, Violation{Rule: RuleTrailingPeriod, Description: "名前をピリオドで終えることはできません"})
 	}
 	if d, ok := reserved(fixed); ok {
 		vs = append(vs, Violation{Rule: RuleReserved, Description: d})
 	}
-	if nfc, nfd := len(fixed), len(norm.NFD.String(fixed)); nfc > MaxBytes || nfd > MaxBytes {
+	if nfc, nfd := nameByteLengths(fixed); max(nfc, nfd) > MaxBytes {
 		vs = append(vs, Violation{Rule: RuleTooLong, Description: fmt.Sprintf("名前は UTF-8 で %d バイト以内にしてください. NFC で %d バイト, NFD で %d バイトです", MaxBytes, nfc, nfd)})
 	}
 	return fixed, vs
+}
+
+func hasTrailingPeriod(name string) bool {
+	return strings.HasSuffix(name, ".")
+}
+
+// nameByteLengths は, NFC への自動修正を済ませた名前について, そのままのバイト長と NFD にしたバイト長を返す.
+func nameByteLengths(name string) (nfc, nfd int) {
+	return len(name), len(norm.NFD.String(name))
 }
 
 // fix は, 見た目を変えない修正を, 次の順に行う.
