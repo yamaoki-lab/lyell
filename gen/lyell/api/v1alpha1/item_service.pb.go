@@ -198,8 +198,10 @@ type CreateItemRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// kind は item の種類. 現在は ITEM_KIND_ASSET のみを受け付ける.
 	Kind ItemKind `protobuf:"varint,1,opt,name=kind,proto3,enum=lyell.api.v1alpha1.ItemKind" json:"kind,omitempty"`
-	// content は, 最初の revision の中身. blob_sha256 は必須で, blob を事前に保存しておく必要がある. name は省略でき, 省略すると名前の無い revision になる. 出力専用のフィールドは, 設定しても無視する.
-	Content       *RevisionContent `protobuf:"bytes,3,opt,name=content,proto3" json:"content,omitempty"`
+	// content は, 最初の revision の中身. blob_sha256 は validate_only が true の場合に限り省略できる. 指定する場合は, blob を事前に保存しておく必要がある. name は省略でき, 省略すると名前のない revision になる. 出力専用のフィールドは, 設定しても無視する.
+	Content *RevisionContent `protobuf:"bytes,3,opt,name=content,proto3" json:"content,omitempty"`
+	// validate_only が true なら, リクエストを検証し, 何も保存せずにレスポンスを返す. blob_sha256 を省略した場合は blob の検証を省略する. 検証に失敗した場合は, validate_only が false の場合と同じエラーと詳細情報を返す.
+	ValidateOnly  bool `protobuf:"varint,4,opt,name=validate_only,json=validateOnly,proto3" json:"validate_only,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -248,12 +250,19 @@ func (x *CreateItemRequest) GetContent() *RevisionContent {
 	return nil
 }
 
+func (x *CreateItemRequest) GetValidateOnly() bool {
+	if x != nil {
+		return x.ValidateOnly
+	}
+	return false
+}
+
 // CreateItemResponse は, CreateItem のレスポンス.
 type CreateItemResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// item は, 作成した item.
+	// item は, 作成した item. validate_only が true の場合, id と head は空になる.
 	Item *Item `protobuf:"bytes,1,opt,name=item,proto3" json:"item,omitempty"`
-	// revision は, 作成した最初の revision.
+	// revision は, 作成した最初の revision. validate_only が true の場合, id, item_id, content.create_time は空になる. リクエストで blob_sha256 を省略した場合は, content.blob_sha256 と content.blob_size も空になる.
 	Revision      *Revision `protobuf:"bytes,2,opt,name=revision,proto3" json:"revision,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -694,7 +703,9 @@ type CommitRevisionRequest struct {
 	Content *RevisionContent `protobuf:"bytes,5,opt,name=content,proto3" json:"content,omitempty"`
 	// update_mask は, content のうち変更するフィールド (AIP-134). パスには content 内のフィールド名 (例: blob_sha256) を指定する. 省略するか空の場合は, content で値が設定されているフィールドを変更する.
 	// 値を空にしたフィールドを指定すると, そのフィールドを消去する. ただし blob_sha256 は消去できず, INVALID_ARGUMENT になる. ワイルドカード "*" や存在しないフィールド名も INVALID_ARGUMENT になる. 出力専用のフィールドは, 指定しても無視する.
-	UpdateMask    *fieldmaskpb.FieldMask `protobuf:"bytes,6,opt,name=update_mask,json=updateMask,proto3" json:"update_mask,omitempty"`
+	UpdateMask *fieldmaskpb.FieldMask `protobuf:"bytes,6,opt,name=update_mask,json=updateMask,proto3" json:"update_mask,omitempty"`
+	// validate_only が true なら, リクエストを検証し, 何も保存せずにレスポンスを返す. 検証に失敗した場合は, validate_only が false の場合と同じエラーと詳細情報を返す.
+	ValidateOnly  bool `protobuf:"varint,7,opt,name=validate_only,json=validateOnly,proto3" json:"validate_only,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -764,10 +775,17 @@ func (x *CommitRevisionRequest) GetUpdateMask() *fieldmaskpb.FieldMask {
 	return nil
 }
 
+func (x *CommitRevisionRequest) GetValidateOnly() bool {
+	if x != nil {
+		return x.ValidateOnly
+	}
+	return false
+}
+
 // CommitRevisionResponse は, CommitRevision のレスポンス.
 type CommitRevisionResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// revision は, 追加した revision. item の head は, この revision の ID へ進められる.
+	// revision は, 追加した revision. item の head は, この revision の ID へ進められる. validate_only が true の場合, id と content.create_time は空になり, item の head は変わらない.
 	Revision      *Revision `protobuf:"bytes,1,opt,name=revision,proto3" json:"revision,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -906,10 +924,11 @@ var File_lyell_api_v1alpha1_item_service_proto protoreflect.FileDescriptor
 
 const file_lyell_api_v1alpha1_item_service_proto_rawDesc = "" +
 	"\n" +
-	"%lyell/api/v1alpha1/item_service.proto\x12\x12lyell.api.v1alpha1\x1a google/protobuf/field_mask.proto\x1a\x1dlyell/api/v1alpha1/item.proto\"\x97\x01\n" +
+	"%lyell/api/v1alpha1/item_service.proto\x12\x12lyell.api.v1alpha1\x1a google/protobuf/field_mask.proto\x1a\x1dlyell/api/v1alpha1/item.proto\"\xbc\x01\n" +
 	"\x11CreateItemRequest\x120\n" +
 	"\x04kind\x18\x01 \x01(\x0e2\x1c.lyell.api.v1alpha1.ItemKindR\x04kind\x12=\n" +
-	"\acontent\x18\x03 \x01(\v2#.lyell.api.v1alpha1.RevisionContentR\acontentJ\x04\b\x02\x10\x03R\vblob_sha256\"|\n" +
+	"\acontent\x18\x03 \x01(\v2#.lyell.api.v1alpha1.RevisionContentR\acontent\x12#\n" +
+	"\rvalidate_only\x18\x04 \x01(\bR\fvalidateOnlyJ\x04\b\x02\x10\x03R\vblob_sha256\"|\n" +
 	"\x12CreateItemResponse\x12,\n" +
 	"\x04item\x18\x01 \x01(\v2\x18.lyell.api.v1alpha1.ItemR\x04item\x128\n" +
 	"\brevision\x18\x02 \x01(\v2\x1c.lyell.api.v1alpha1.RevisionR\brevision\" \n" +
@@ -934,14 +953,15 @@ const file_lyell_api_v1alpha1_item_service_proto_rawDesc = "" +
 	"\x12GetRevisionRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\"O\n" +
 	"\x13GetRevisionResponse\x128\n" +
-	"\brevision\x18\x01 \x01(\v2\x1c.lyell.api.v1alpha1.RevisionR\brevision\"\xfe\x01\n" +
+	"\brevision\x18\x01 \x01(\v2\x1c.lyell.api.v1alpha1.RevisionR\brevision\"\xa3\x02\n" +
 	"\x15CommitRevisionRequest\x12\x17\n" +
 	"\aitem_id\x18\x01 \x01(\tR\x06itemId\x12#\n" +
 	"\rexpected_head\x18\x02 \x01(\tR\fexpectedHead\x12\x18\n" +
 	"\aparents\x18\x03 \x03(\tR\aparents\x12=\n" +
 	"\acontent\x18\x05 \x01(\v2#.lyell.api.v1alpha1.RevisionContentR\acontent\x12;\n" +
 	"\vupdate_mask\x18\x06 \x01(\v2\x1a.google.protobuf.FieldMaskR\n" +
-	"updateMaskJ\x04\b\x04\x10\x05R\vblob_sha256\"R\n" +
+	"updateMask\x12#\n" +
+	"\rvalidate_only\x18\a \x01(\bR\fvalidateOnlyJ\x04\b\x04\x10\x05R\vblob_sha256\"R\n" +
 	"\x16CommitRevisionResponse\x128\n" +
 	"\brevision\x18\x01 \x01(\v2\x1c.lyell.api.v1alpha1.RevisionR\brevision\".\n" +
 	"\tHeadMoved\x12!\n" +

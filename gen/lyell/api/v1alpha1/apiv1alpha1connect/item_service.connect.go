@@ -49,7 +49,7 @@ const (
 // ItemServiceClient is a client for the lyell.api.v1alpha1.ItemService service.
 type ItemServiceClient interface {
 	// CreateItem は, item を, 保存済みの blob を指す最初の revision と共に作成する. 現在は asset のみを作成できる.
-	// blob が存在しなければ, FAILED_PRECONDITION を返す.
+	// blob_sha256 を指定した際に blob が存在しなければ, FAILED_PRECONDITION を返す.
 	CreateItem(context.Context, *connect.Request[v1alpha1.CreateItemRequest]) (*connect.Response[v1alpha1.CreateItemResponse], error)
 	// GetItem は, item を返す. 存在しなければ NOT_FOUND を返す.
 	GetItem(context.Context, *connect.Request[v1alpha1.GetItemRequest]) (*connect.Response[v1alpha1.GetItemResponse], error)
@@ -148,7 +148,7 @@ func (c *itemServiceClient) CommitRevision(ctx context.Context, req *connect.Req
 // ItemServiceHandler is an implementation of the lyell.api.v1alpha1.ItemService service.
 type ItemServiceHandler interface {
 	// CreateItem は, item を, 保存済みの blob を指す最初の revision と共に作成する. 現在は asset のみを作成できる.
-	// blob が存在しなければ, FAILED_PRECONDITION を返す.
+	// blob_sha256 を指定した際に blob が存在しなければ, FAILED_PRECONDITION を返す.
 	CreateItem(context.Context, *connect.Request[v1alpha1.CreateItemRequest]) (*connect.Response[v1alpha1.CreateItemResponse], error)
 	// GetItem は, item を返す. 存在しなければ NOT_FOUND を返す.
 	GetItem(context.Context, *connect.Request[v1alpha1.GetItemRequest]) (*connect.Response[v1alpha1.GetItemResponse], error)
