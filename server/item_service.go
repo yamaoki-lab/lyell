@@ -104,7 +104,7 @@ func (s *itemService) CommitRevision(ctx context.Context, req *connect.Request[a
 			return nil, invalidArgument("content.blob_sha256", err)
 		}
 	}
-	// 名前を変更する時だけ, 新しい名前を自動で修正して確かめる. 引き継ぐ名前は確かめ直さない.
+	// 名前を変更する時だけ, 新しい名前を自動で修正して検証する. 引き継ぐ名前は再検証しない.
 	var newName string
 	if !inheritName {
 		if newName, err = checkName(req.Msg.GetContent().GetName()); err != nil {
@@ -186,7 +186,7 @@ func (s *itemService) connectError(ctx context.Context, err error) error {
 		return parentsError(pe)
 	case errors.As(err, &nff):
 		ce := connect.NewError(connect.CodeAborted, err)
-		// 呼び出し側が読み直さずに現在の head を取得できるよう, 詳細に HeadMoved を付ける.
+		// 呼び出し側が読み直さずに現在の head を取得できるよう, 詳細に HeadMoved を付与する.
 		if d, derr := connect.NewErrorDetail(&apiv1alpha1.HeadMoved{CurrentHead: nff.Head.String()}); derr == nil {
 			ce.AddDetail(d)
 		}
@@ -227,8 +227,8 @@ func reasonName(r apiv1alpha1.FieldViolationReason) string {
 	return strings.TrimPrefix(r.String(), reasonPrefix)
 }
 
-// invalidArgument は, INVALID_ARGUMENT のエラーを作り, 詳細情報に BadRequest (AIP-193) を付ける. field はリクエスト内のフィールドのパス. errs はそのフィールドの違反で, 1つの違反を1つの field violation にする. reject で作ったエラーなら, その理由を reason に設定する.
-func invalidArgument(field string, errs ...error) error {
+// invalidArgument は, INVALID_ARGUMENT のエラーを作り, 詳細情報に BadRequest (AIP-193) を付与する. field はリクエスト内のフィールドのパス. errs はそのフィールドの違反で, 1つの違反を1つの field violation にする. reject で作ったエラーなら, その理由を reason に設定する.
+func invalidArgument(field string, errs ...error) *connect.Error {
 	msgs := make([]string, len(errs))
 	br := &errdetails.BadRequest{}
 	for i, err := range errs {

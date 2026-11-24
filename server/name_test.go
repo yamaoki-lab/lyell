@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -135,8 +136,15 @@ func TestRevisionName_RejectsEveryViolatedRule(t *testing.T) {
 	s, c := newTestServer(t)
 	ctx := context.Background()
 
-	_, err := c.CreateItem(ctx, connect.NewRequest(&apiv1alpha1.CreateItemRequest{Kind: apiv1alpha1.ItemKind_ITEM_KIND_ASSET, Content: &apiv1alpha1.RevisionContent{BlobSha256: putBlob(t, s, "r1"), Name: "nul.a:\u202E."}}))
+	sum := putBlob(t, s, "r1")
+	_, err := c.CreateItem(ctx, connect.NewRequest(&apiv1alpha1.CreateItemRequest{Kind: apiv1alpha1.ItemKind_ITEM_KIND_ASSET, Content: &apiv1alpha1.RevisionContent{BlobSha256: sum, Name: "nul.a:\u202E."}}))
 	wantViolations(t, "規則に違反する名前の CreateItem()", err, "content.name", "NAME_FORBIDDEN_CHARACTER", "NAME_BIDI_CONTROL", "NAME_TRAILING_PERIOD", "NAME_RESERVED")
+	wantNameSuggestion(t, err, "nul_.a__")
+
+	_, err = c.CreateItem(ctx, connect.NewRequest(&apiv1alpha1.CreateItemRequest{Kind: apiv1alpha1.ItemKind_ITEM_KIND_ASSET, Content: &apiv1alpha1.RevisionContent{BlobSha256: sum, Name: " "}}))
+	wantViolation(t, "名前が空白のみの CreateItem()", err, "content.name", "NAME_BLANK")
+	wantNameSuggestion(t, err, "")
+
 	list, err := c.ListItems(ctx, connect.NewRequest(&apiv1alpha1.ListItemsRequest{}))
 	if err != nil {
 		t.Fatalf("ListItems() error = %v, want nil", err)
@@ -148,12 +156,13 @@ func TestRevisionName_RejectsEveryViolatedRule(t *testing.T) {
 	created := createNamed(t, s, c, "r1", "名前")
 	itemID, head := created.GetItem().GetId(), created.GetRevision().GetId()
 	tests := []struct {
-		name    string
-		content *apiv1alpha1.RevisionContent
-		mask    []string
-		reason  string
+		name       string
+		content    *apiv1alpha1.RevisionContent
+		mask       []string
+		reason     string
+		suggestion string
 	}{
-		{name: "長すぎる名前", content: &apiv1alpha1.RevisionContent{Name: strings.Repeat("a", 256)}, reason: "NAME_TOO_LONG"},
+		{name: "長すぎる名前", content: &apiv1alpha1.RevisionContent{Name: strings.Repeat("a", 256)}, reason: "NAME_TOO_LONG", suggestion: strings.Repeat("a", 255)},
 		{name: "空白だけの名前", content: &apiv1alpha1.RevisionContent{Name: " \t "}, reason: "NAME_BLANK"},
 		{name: "update_mask に name を指定した空白だけの名前", content: &apiv1alpha1.RevisionContent{Name: " "}, mask: []string{"name"}, reason: "NAME_BLANK"},
 	}
@@ -165,6 +174,7 @@ func TestRevisionName_RejectsEveryViolatedRule(t *testing.T) {
 			}
 			_, err := c.CommitRevision(ctx, connect.NewRequest(req))
 			wantViolations(t, "CommitRevision()", err, "content.name", tt.reason)
+			wantNameSuggestion(t, err, tt.suggestion)
 		})
 	}
 	item, err := c.GetItem(ctx, connect.NewRequest(&apiv1alpha1.GetItemRequest{Id: itemID}))
@@ -173,6 +183,33 @@ func TestRevisionName_RejectsEveryViolatedRule(t *testing.T) {
 	}
 	if got := item.Msg.GetItem().GetHead(); got != head {
 		t.Errorf("拒否した後の head = %s, want %s (変わらない)", got, head)
+	}
+}
+
+// wantNameSuggestion は, BadRequest に続いて指定の候補が付与されることを検証する. want が空なら, 詳細情報が BadRequest のみであることを検証する.
+func wantNameSuggestion(t *testing.T, err error, want string) {
+	t.Helper()
+	var ce *connect.Error
+	if !errors.As(err, &ce) {
+		t.Fatalf("error = %v, want *connect.Error", err)
+	}
+	details := ce.Details()
+	if want == "" {
+		if len(details) != 1 {
+			t.Errorf("詳細情報 = %v, want BadRequest のみ", details)
+		}
+		return
+	}
+	if len(details) != 2 {
+		t.Fatalf("詳細情報 = %v, want BadRequest と NameSuggestion", details)
+	}
+	v, err := details[1].Value()
+	if err != nil {
+		t.Fatalf("NameSuggestion の読み取り = %v", err)
+	}
+	got, ok := v.(*apiv1alpha1.NameSuggestion)
+	if !ok || got.GetName() != want {
+		t.Errorf("NameSuggestion = %v, want name %q", v, want)
 	}
 }
 
@@ -201,7 +238,7 @@ func TestCommitRevision_DoesNotRecheckInheritedName(t *testing.T) {
 		t.Errorf("引き継いだ name = %q, want %q", got, "a:b")
 	}
 
-	// update_mask に含まれない name は変更しないので, 規則に違反していても確かめない.
+	// update_mask に含まれない name は変更しないので, 規則に違反していても検証しない.
 	r4 := commit(t, c, &apiv1alpha1.CommitRevisionRequest{ItemId: item.GetId(), ExpectedHead: r3.GetId(), Content: &apiv1alpha1.RevisionContent{BlobSha256: putBlob(t, s, "r4"), Name: "c:d"}, UpdateMask: mask("blob_sha256")})
 	if got := r4.GetContent().GetName(); got != "a:b" {
 		t.Errorf("update_mask に name を含めない更新の後の name = %q, want %q", got, "a:b")
