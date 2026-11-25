@@ -39,13 +39,17 @@ const (
 	KindAsset Kind = "asset"
 	// KindCollection は, 中身 (blob) が, 他の item への参照の一覧である item.
 	KindCollection Kind = "collection"
+	// KindExtension は, 開かれた時に拡張機能が中身を用意する item. 別の item のレンディションや現在時刻のように, 保存したバイト列ではなく開いた時に作られる中身を表す. item は中身を用意する拡張機能の名前 (Item.Extension) を持ち, revision は blob を持たずに, その拡張機能だけが読むデータを body の extension_data に持つ. 開いた時に作られるバイト列は, マシンごとに異なりうるので revision には保存しない.
+	KindExtension Kind = "extension"
 )
 
 // Item は, item のレコード.
 type Item struct {
 	ID   ID
 	Kind Kind
-	Head ID // 現在指している revision
+	// Extension は, 開かれた時に中身を用意する拡張機能の名前 (lyell.collection 等). Kind が KindExtension の時だけ値を持つ. Kind と同じく item に属し, 作成後は変更不可.
+	Extension string
+	Head      ID // 現在指している revision
 }
 
 // Content は, revision の中身. 間引くと全て削除され, ID と親だけが残る.
@@ -55,9 +59,9 @@ type Content struct {
 	// AuthorUser と AuthorMachine は, 記録した利用者とマシン. どちらも必須. 認証を経ない経路からの記録では, 両方を "anonymous" にする.
 	AuthorUser    string
 	AuthorMachine string
-	// Blob は, 中身のバイト列 (blob) の SHA-256. 記録した後は, バイト列がローカルに保持されているか (転送の対象から外した場合等) とは無関係である. ローカルに存在するかは blobstore に問い合わせる.
+	// Blob は, 中身のバイト列 (blob) の SHA-256. ゼロ値は, blob を持たないこと (開かれた時に拡張機能が中身を用意する item の revision) を表す. 記録した後は, バイト列がローカルに保持されているか (転送の対象から外した場合等) とは無関係である. ローカルに存在するかは blobstore に問い合わせる.
 	Blob blobstore.Sum
-	// BlobSize は, blob のバイト数. 記録時は itemstore が blobstore から取得した値を入れるので, 渡された値は使用しない.
+	// BlobSize は, blob のバイト数. blob を持たない時は 0. 記録時は itemstore が blobstore から取得した値を入れるので, 渡された値は使用しない.
 	BlobSize int64
 	// Body は, revision の情報を lyell.storage.v1alpha1.RevisionBody で表したバイト列. revision の一次情報で, 上のフィールドはここから作り直せる. 記録する時は, itemstore が上のフィールドの値で Body の同じフィールドを上書きし, 他のフィールド (名前や, この Lyell が知らないもの) はそのまま残す. 空でもよい. 読み取り時には, 記録した body 全体が入る.
 	Body []byte
@@ -83,9 +87,11 @@ var ErrInvalid = errors.New("itemstore: 引数が不正です")
 
 // NewItem は, CreateItem で作成する item の内容. フィールドを追加した時に呼び出し側のコードの変更を不要にするため, 引数を並べずに構造体で受け取る. 指定しなかったフィールドはゼロ値になる.
 type NewItem struct {
-	Kind    Kind
-	Content Content // 最初の revision の中身
-	// Data は, 中身のバイト列 (blob). SHA-256 が Content.Blob と一致しなければ, 何も記録しない. nil の場合は blob が保存済みであるとみなし, 存在しなければ ErrBlobNotFound を返す (API で, blob を RPC とは別に先に送った場合).
+	Kind Kind
+	// Extension は, 中身を用意する拡張機能の名前. Kind が KindExtension の時は必須で, それ以外では空にする.
+	Extension string
+	Content   Content // 最初の revision の中身
+	// Data は, 中身のバイト列 (blob). KindExtension の item は blob を持たないので使用しない. SHA-256 が Content.Blob と一致しなければ, 何も記録しない. nil の場合は blob が保存済みであるとみなし, 存在しなければ ErrBlobNotFound を返す (API で, blob を RPC とは別に先に送った場合).
 	Data io.Reader
 	// PutOptions は, blob を書き込む時のオプション (保存先の指定等). 無ければ保存先の既定に従う.
 	PutOptions []blobstore.PutOption
@@ -115,7 +121,7 @@ func (s *Store) CreateItem(ctx context.Context, n NewItem) (Item, error) {
 	defer func() { _ = tx.Rollback() }() // Commit 済みの場合は何も行わない
 
 	// items と revisions は互いを参照するが, 外部キーの検査はコミット時に行われるので, 挿入の順序は問わない.
-	if _, err := tx.ExecContext(ctx, "INSERT INTO items (id, kind, head) VALUES (?, ?, ?)", itemID[:], string(n.Kind), revID[:]); err != nil {
+	if _, err := tx.ExecContext(ctx, "INSERT INTO items (id, kind, extension, head) VALUES (?, ?, ?, ?)", itemID[:], string(n.Kind), extensionColumn(n.Extension), revID[:]); err != nil {
 		return Item{}, err
 	}
 	if err := insertRevision(ctx, tx, revID, itemID, content); err != nil {
@@ -125,24 +131,30 @@ func (s *Store) CreateItem(ctx context.Context, n NewItem) (Item, error) {
 	if err := tx.Commit(); err != nil {
 		return Item{}, err
 	}
-	return Item{ID: itemID, Kind: n.Kind, Head: revID}, nil
+	return Item{ID: itemID, Kind: n.Kind, Extension: n.Extension, Head: revID}, nil
 }
 
-// ValidateCreateItem は, CreateItem の入力を検証し, 最初の revision の中身を返す. hasBlob が false なら blob の検証を省略する.
-func (s *Store) ValidateCreateItem(ctx context.Context, kind Kind, content Content, hasBlob bool) (Content, error) {
-	return s.prepareNewItem(ctx, NewItem{Kind: kind, Content: content}, hasBlob)
+// ValidateCreateItem は, CreateItem の入力を検証し, 最初の revision の中身を返す. hasBlob が false なら blob の検証を省略する. KindExtension の item は blob を持たないので, hasBlob によらず blob を検証しない.
+func (s *Store) ValidateCreateItem(ctx context.Context, kind Kind, extension string, content Content, hasBlob bool) (Content, error) {
+	return s.prepareNewItem(ctx, NewItem{Kind: kind, Extension: extension, Content: content}, hasBlob)
 }
 
 func (s *Store) prepareNewItem(ctx context.Context, n NewItem, hasBlob bool) (Content, error) {
 	if err := n.Kind.validate(); err != nil {
 		return Content{}, err
 	}
+	if err := validateItemExtension(n.Kind, n.Extension); err != nil {
+		return Content{}, err
+	}
 	if err := n.Content.validate(); err != nil {
+		return Content{}, err
+	}
+	if err := validateContentForKind(n.Kind, n.Content, hasBlob); err != nil {
 		return Content{}, err
 	}
 	content := n.Content
 	content.BlobSize = 0
-	if hasBlob {
+	if hasBlob && n.Kind != KindExtension {
 		size, err := s.placeBlob(ctx, content.Blob, n.Data, n.PutOptions)
 		if err != nil {
 			return Content{}, err
@@ -171,6 +183,14 @@ func (s *Store) placeBlob(ctx context.Context, sum blobstore.Sum, data io.Reader
 	return size, nil
 }
 
+// extensionColumn は, items の extension の列に書く値を返す. 拡張機能の名前を持たない item では NULL にする.
+func extensionColumn(name string) any {
+	if name == "" {
+		return nil
+	}
+	return name
+}
+
 func insertRevision(ctx context.Context, tx *sql.Tx, id, itemID ID, c Content) error {
 	body, err := encodeBody(c)
 	if err != nil {
@@ -184,24 +204,25 @@ func insertRevision(ctx context.Context, tx *sql.Tx, id, itemID ID, c Content) e
 	_, err = tx.ExecContext(ctx, `
 INSERT INTO revisions (id, item_id, created_at, author_user, author_machine, blob_sha256, blob_size, body)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		id[:], itemID[:], cols.createdAt, cols.authorUser, cols.authorMachine, cols.blob, cols.blobSize, body)
+		id[:], itemID[:], cols.createdAt, cols.authorUser, cols.authorMachine, cols.blob, cols.blobSizeColumn(), body)
 	return err
 }
 
 // Item は, id の item を返す. 存在しなければ ErrNotFound を返す.
 func (s *Store) Item(ctx context.Context, id ID) (Item, error) {
 	var (
-		kind string
-		head []byte
+		kind      string
+		extension sql.NullString
+		head      []byte
 	)
-	err := s.read.QueryRowContext(ctx, "SELECT kind, head FROM items WHERE id = ?", id[:]).Scan(&kind, &head)
+	err := s.read.QueryRowContext(ctx, "SELECT kind, extension, head FROM items WHERE id = ?", id[:]).Scan(&kind, &extension, &head)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Item{}, fmt.Errorf("item %s: %w", id, ErrNotFound)
 	}
 	if err != nil {
 		return Item{}, err
 	}
-	item := Item{ID: id, Kind: Kind(kind)}
+	item := Item{ID: id, Kind: Kind(kind), Extension: extension.String}
 	if err := scanID(head, &item.Head); err != nil {
 		return Item{}, err
 	}
@@ -265,7 +286,7 @@ func (c *contentColumns) content(id ID) (*Content, error) {
 	if c.thinned {
 		return nil, nil
 	}
-	// 間引かれていない revision が中身の列を全て持つことは, テーブルの CHECK 制約が保証している.
+	// 間引かれていない revision が記録時刻と作成者の列を持つこと, および blob_sha256 と blob_size が両方あるか両方無いかは, テーブルの CHECK 制約が保証している.
 	body := c.body
 	if body == nil {
 		body = []byte{}
@@ -276,6 +297,10 @@ func (c *contentColumns) content(id ID) (*Content, error) {
 		AuthorMachine: c.authorMachine.String,
 		BlobSize:      c.blobSize.Int64,
 		Body:          body,
+	}
+	// blob を持たない revision では, Blob はゼロ値のまま (blob_size も NULL なので BlobSize は 0).
+	if c.blob == nil {
+		return content, nil
 	}
 	if len(c.blob) != len(content.Blob) {
 		return nil, fmt.Errorf("revision %s の blob_sha256 のバイト数が不正です (%d バイト)", id, len(c.blob))
@@ -316,10 +341,15 @@ func scanID(raw []byte, id *ID) error {
 
 func (k Kind) validate() error {
 	switch k {
-	case KindAsset, KindCollection:
+	case KindAsset, KindCollection, KindExtension:
 		return nil
 	}
 	return fmt.Errorf("%w: item 種別 %q は不明です", ErrInvalid, k)
+}
+
+// hasBlob は, 中身が blob を持つかを返す.
+func (c Content) hasBlob() bool {
+	return c.Blob != blobstore.Sum{}
 }
 
 func (c Content) validate() error {

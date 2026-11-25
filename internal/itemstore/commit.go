@@ -41,7 +41,7 @@ type NewRevision struct {
 	// Parents は, 新しい revision の親. 空なら From だけを親にする (最も一般的な早送り). 指定する場合は From を必ず含める. item の統合では, 別の item の head も含めてよい.
 	Parents []ID
 	Content Content
-	// Data は, 中身のバイト列 (blob). nil の場合は blob が保存済みであるとみなし, 存在しなければ ErrBlobNotFound を返す.
+	// Data は, 中身のバイト列 (blob). KindExtension の item は blob を持たないので使用しない. nil の場合は blob が保存済みであるとみなし, 存在しなければ ErrBlobNotFound を返す.
 	Data io.Reader
 	// PutOptions は, blob を書き込む時のオプション (保存先の指定等).
 	PutOptions []blobstore.PutOption
@@ -96,17 +96,19 @@ func (s *Store) CommitRevision(ctx context.Context, r NewRevision) (ID, error) {
 
 // ValidateCommitRevision は, CommitRevision の入力を読み取りトランザクションで検証し, 保存される revision の中身と親を返す. blob は保存済みである必要があり, Data と PutOptions は使用しない.
 func (s *Store) ValidateCommitRevision(ctx context.Context, r NewRevision) (Revision, error) {
+	// prepareRevision は読み取り用接続を自分で取るので, トランザクションを始める前に呼ぶ. 接続を1本持ったまま呼ぶと, 同時に呼ばれた数が読み取り用接続の数に達した時に全てが止まる. 種類は変わらず item も消えないので, 先に読んでも結果は同じ.
+	r.Data = nil
+	r, err := s.prepareRevision(ctx, r)
+	if err != nil {
+		return Revision{}, err
+	}
+
 	tx, err := s.read.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return Revision{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	r.Data = nil
-	r, err = s.prepareRevision(ctx, r)
-	if err != nil {
-		return Revision{}, err
-	}
 	if err := validateRevisionTarget(ctx, tx, r); err != nil {
 		return Revision{}, err
 	}
@@ -125,6 +127,18 @@ func (s *Store) prepareRevision(ctx context.Context, r NewRevision) (NewRevision
 	}
 	if err := validateParents(r.From, r.Parents); err != nil {
 		return NewRevision{}, err
+	}
+	// 種類は作成後に変わらないので, 記録するトランザクションの外で読んでよい. blob を書き込む前に, 種類に合わない中身を弾く.
+	item, err := s.Item(ctx, r.ItemID)
+	if err != nil {
+		return NewRevision{}, err
+	}
+	if err := validateContentForKind(item.Kind, r.Content, true); err != nil {
+		return NewRevision{}, err
+	}
+	r.Content.BlobSize = 0
+	if item.Kind == KindExtension {
+		return r, nil
 	}
 	size, err := s.placeBlob(ctx, r.Content.Blob, r.Data, r.PutOptions)
 	if err != nil {

@@ -48,7 +48,7 @@ func (s *itemService) CreateItem(ctx context.Context, req *connect.Request[apiv1
 	}
 	content := newContent(ctx, sum, body)
 	if req.Msg.GetValidateOnly() {
-		content, err = s.items.ValidateCreateItem(ctx, kind, content, hasBlob)
+		content, err = s.items.ValidateCreateItem(ctx, kind, "", content, hasBlob)
 		if err != nil {
 			return nil, s.connectError(ctx, err)
 		}

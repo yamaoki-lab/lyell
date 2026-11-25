@@ -199,7 +199,7 @@ func TestRevision_ParentsSurviveThinning(t *testing.T) {
 	}
 
 	// r2 を間引く. 中身の列だけが削除され, ID と親は残る.
-	if _, err := s.write.Exec(`UPDATE revisions SET created_at = NULL, author_user = NULL, author_machine = NULL, blob_sha256 = NULL, body = NULL WHERE id = ?`, r2[:]); err != nil {
+	if _, err := s.write.Exec(`UPDATE revisions SET created_at = NULL, author_user = NULL, author_machine = NULL, blob_sha256 = NULL, blob_size = NULL, body = NULL WHERE id = ?`, r2[:]); err != nil {
 		t.Fatalf("間引けない: %v", err)
 	}
 
