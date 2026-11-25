@@ -48,6 +48,8 @@ message CreateItemRequest {
   RevisionContent content = 3;
   // validate_only が true なら, リクエストを検証し, 何も保存せずにレスポンスを返す. blob_sha256 を省略した場合は blob の検証を省略する. 検証に失敗した場合は, validate_only が false の場合と同じエラーと詳細情報を返す.
   bool validate_only = 4;
+  // extension は, 開かれた時に item の中身を用意する拡張機能の名前. ITEM_KIND_EXTENSION の item でのみ指定できる. asset に指定すると INVALID_ARGUMENT を返す.
+  string extension = 5;
 }
 
 // CreateItemResponse は, CreateItem のレスポンス.
@@ -86,7 +88,7 @@ message ListItemsRequest {
 
 // ListItemsResponse は, ListItems のレスポンス.
 message ListItemsResponse {
-  // entries は, このページの item 一覧. order_by で指定された順に並ぶ.
+  // entries は, このページの item 一覧. order_by で指定された順に並ぶ. head_revision.content.extension_data は返さない.
   repeated ItemEntry entries = 1;
   // next_page_token は, 次ページを取得する際に page_token に渡す値. 空なら最後のページ.
   string next_page_token = 2;
@@ -166,7 +168,7 @@ enum FieldViolationReason {
   FIELD_VIOLATION_REASON_KIND_UNSPECIFIED = 3;
   // FIELD_VIOLATION_REASON_KIND_UNKNOWN は, item の種類が ItemKind に存在しない値であること.
   FIELD_VIOLATION_REASON_KIND_UNKNOWN = 4;
-  // FIELD_VIOLATION_REASON_KIND_UNSUPPORTED は, item の種類は ItemKind に存在するが, まだ作成できないこと (ITEM_KIND_COLLECTION).
+  // FIELD_VIOLATION_REASON_KIND_UNSUPPORTED は, item の種類が ItemKind に存在するが, まだ作成できないこと (ITEM_KIND_COLLECTION, ITEM_KIND_EXTENSION). CommitRevision では, item_id の item が asset ではなく, まだ revision をコミットできないこと. field は item_id.
   FIELD_VIOLATION_REASON_KIND_UNSUPPORTED = 5;
   // FIELD_VIOLATION_REASON_PARENTS_TOO_MANY は, parents の数が上限を超えていること.
   FIELD_VIOLATION_REASON_PARENTS_TOO_MANY = 6;
@@ -208,7 +210,7 @@ enum FieldViolationReason {
   FIELD_VIOLATION_REASON_FILTER_FIELD_UNSUPPORTED = 24;
   // FIELD_VIOLATION_REASON_FILTER_OPERATOR_UNSUPPORTED は, 使用できない演算子 (OR, NOT, != など) か, そのフィールドでは使えない演算子を指定していること. 比較か, 比較を AND で結合したもの以外の式も含む.
   FIELD_VIOLATION_REASON_FILTER_OPERATOR_UNSUPPORTED = 25;
-  // FIELD_VIOLATION_REASON_FILTER_VALUE_INVALID は, 比較の値がフィールドに合わないこと. 型の合わない値, ITEM_KIND_ASSET と ITEM_KIND_COLLECTION 以外の item.kind, RFC 3339 の文字列でない時刻を含む.
+  // FIELD_VIOLATION_REASON_FILTER_VALUE_INVALID は, 比較の値がフィールドに合わないこと. 型の合わない値, ITEM_KIND_ASSET, ITEM_KIND_COLLECTION, ITEM_KIND_EXTENSION 以外の item.kind, RFC 3339 の文字列でない時刻を含む.
   FIELD_VIOLATION_REASON_FILTER_VALUE_INVALID = 26;
   // FIELD_VIOLATION_REASON_FILTER_FIELD_REPEATED は, item.kind を2回以上指定していること.
   FIELD_VIOLATION_REASON_FILTER_FIELD_REPEATED = 27;
@@ -220,4 +222,8 @@ enum FieldViolationReason {
   FIELD_VIOLATION_REASON_ORDER_BY_FIELD_UNSUPPORTED = 30;
   // FIELD_VIOLATION_REASON_ORDER_BY_TOO_MANY_FIELDS は, order_by に2つ以上のフィールドを指定していること.
   FIELD_VIOLATION_REASON_ORDER_BY_TOO_MANY_FIELDS = 31;
+  // FIELD_VIOLATION_REASON_EXTENSION_FOR_ASSET は, asset の item に extension を指定していること. field は extension.
+  FIELD_VIOLATION_REASON_EXTENSION_FOR_ASSET = 32;
+  // FIELD_VIOLATION_REASON_EXTENSION_DATA_FOR_ASSET は, asset の item の revision に extension_data を指定していること. update_mask で指定した場合も含む. field は content.extension_data.
+  FIELD_VIOLATION_REASON_EXTENSION_DATA_FOR_ASSET = 33;
 }

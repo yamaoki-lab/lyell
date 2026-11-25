@@ -15,6 +15,8 @@ message Item {
   ItemKind kind = 2;
   // head は, 現在指している revision の ID.
   string head = 3;
+  // extension は, 開かれた時に item の中身を用意する拡張機能の名前. ITEM_KIND_EXTENSION の item にのみ存在し, 作成時にのみ設定される.
+  string extension = 4;
 }
 
 // ItemKind は item の種類.
@@ -25,6 +27,8 @@ enum ItemKind {
   ITEM_KIND_ASSET = 1;
   // ITEM_KIND_COLLECTION は, 中身が, 他の item への参照の一覧である item. 一覧の形式が決まるまでは作成できない.
   ITEM_KIND_COLLECTION = 2;
+  // ITEM_KIND_EXTENSION は, 開かれた時に, extension で指定した拡張機能が中身を用意する item. blob を持たず, 拡張機能が読み取るデータを extension_data に持つ. 拡張機能を登録できるようになるまでは作成できない.
+  ITEM_KIND_EXTENSION = 3;
 }
 
 // Revision は, item の中身の, ある時点の記録. 一度記録すると変わらない.
@@ -47,7 +51,7 @@ message RevisionContent {
   string author_user = 2 [(google.api.field_behavior) = OUTPUT_ONLY];
   // author_machine は, 記録したマシン. 認証を実装するまでは, サーバが "anonymous" を設定する.
   string author_machine = 3 [(google.api.field_behavior) = OUTPUT_ONLY];
-  // blob_sha256 は, 中身のバイト列 (blob) の SHA-256 を, 小文字の16進数64文字で表記したもの. バイト列は /lyell/api/v1alpha1/blobs/sha256/<blob_sha256> で読み取る.
+  // blob_sha256 は, 中身のバイト列 (blob) の SHA-256 を, 小文字の16進数64文字で表記したもの. バイト列は /lyell/api/v1alpha1/blobs/sha256/<blob_sha256> で読み取る. ITEM_KIND_EXTENSION の item の revision では空.
   string blob_sha256 = 4;
   // blob_size は, 中身のバイト列のサイズ (バイト). ファイルシステムとして見せる時に, バイト列を取得せずにサイズを答えるため.
   int64 blob_size = 5 [(google.api.field_behavior) = OUTPUT_ONLY];
@@ -55,4 +59,6 @@ message RevisionContent {
   // CreateItem または CommitRevision で名前を設定すると, 見た目を変えない修正を自動で施して保存し, レスポンスでは修正後の名前を返す. 修正は, ゼロ幅スペース (U+200B), BOM (U+FEFF), ソフトハイフン (U+00AD) および制御文字の削除, 改行とタブの1つのスペースへの置き換え, 前後の空白の除去, NFC への正規化 (CJK 互換漢字は字体を保つためそのまま残す) である.
   // 修正後の名前が規則を満たさなければ, INVALID_ARGUMENT を返す. 満たさない規則はすべて, FieldViolationReason の NAME_ で始まる理由として示す. 名前の候補を作成できる場合は, BadRequest と共に詳細情報に NameSuggestion を付与する. expected_head から引き継いだ名前は, 再検証しない.
   string name = 6;
+  // extension_data は, item の extension で指定した拡張機能のみが読み取るデータ. ITEM_KIND_EXTENSION の item の revision にのみ存在する. ListItems では, 1ページの大きさを抑えるため返さない.
+  bytes extension_data = 7;
 }

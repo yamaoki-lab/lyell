@@ -33,6 +33,8 @@ const (
 	ItemKind_ITEM_KIND_ASSET ItemKind = 1
 	// ITEM_KIND_COLLECTION は, 中身が, 他の item への参照の一覧である item. 一覧の形式が決まるまでは作成できない.
 	ItemKind_ITEM_KIND_COLLECTION ItemKind = 2
+	// ITEM_KIND_EXTENSION は, 開かれた時に, extension で指定した拡張機能が中身を用意する item. blob を持たず, 拡張機能が読み取るデータを extension_data に持つ. 拡張機能を登録できるようになるまでは作成できない.
+	ItemKind_ITEM_KIND_EXTENSION ItemKind = 3
 )
 
 // Enum value maps for ItemKind.
@@ -41,11 +43,13 @@ var (
 		0: "ITEM_KIND_UNSPECIFIED",
 		1: "ITEM_KIND_ASSET",
 		2: "ITEM_KIND_COLLECTION",
+		3: "ITEM_KIND_EXTENSION",
 	}
 	ItemKind_value = map[string]int32{
 		"ITEM_KIND_UNSPECIFIED": 0,
 		"ITEM_KIND_ASSET":       1,
 		"ITEM_KIND_COLLECTION":  2,
+		"ITEM_KIND_EXTENSION":   3,
 	}
 )
 
@@ -84,7 +88,9 @@ type Item struct {
 	// kind は item の種類. 作成後は変わらない.
 	Kind ItemKind `protobuf:"varint,2,opt,name=kind,proto3,enum=lyell.api.v1alpha1.ItemKind" json:"kind,omitempty"`
 	// head は, 現在指している revision の ID.
-	Head          string `protobuf:"bytes,3,opt,name=head,proto3" json:"head,omitempty"`
+	Head string `protobuf:"bytes,3,opt,name=head,proto3" json:"head,omitempty"`
+	// extension は, 開かれた時に item の中身を用意する拡張機能の名前. ITEM_KIND_EXTENSION の item にのみ存在し, 作成時にのみ設定される.
+	Extension     string `protobuf:"bytes,4,opt,name=extension,proto3" json:"extension,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -136,6 +142,13 @@ func (x *Item) GetKind() ItemKind {
 func (x *Item) GetHead() string {
 	if x != nil {
 		return x.Head
+	}
+	return ""
+}
+
+func (x *Item) GetExtension() string {
+	if x != nil {
+		return x.Extension
 	}
 	return ""
 }
@@ -222,14 +235,16 @@ type RevisionContent struct {
 	AuthorUser string `protobuf:"bytes,2,opt,name=author_user,json=authorUser,proto3" json:"author_user,omitempty"`
 	// author_machine は, 記録したマシン. 認証を実装するまでは, サーバが "anonymous" を設定する.
 	AuthorMachine string `protobuf:"bytes,3,opt,name=author_machine,json=authorMachine,proto3" json:"author_machine,omitempty"`
-	// blob_sha256 は, 中身のバイト列 (blob) の SHA-256 を, 小文字の16進数64文字で表記したもの. バイト列は /lyell/api/v1alpha1/blobs/sha256/<blob_sha256> で読み取る.
+	// blob_sha256 は, 中身のバイト列 (blob) の SHA-256 を, 小文字の16進数64文字で表記したもの. バイト列は /lyell/api/v1alpha1/blobs/sha256/<blob_sha256> で読み取る. ITEM_KIND_EXTENSION の item の revision では空.
 	BlobSha256 string `protobuf:"bytes,4,opt,name=blob_sha256,json=blobSha256,proto3" json:"blob_sha256,omitempty"`
 	// blob_size は, 中身のバイト列のサイズ (バイト). ファイルシステムとして見せる時に, バイト列を取得せずにサイズを答えるため.
 	BlobSize int64 `protobuf:"varint,5,opt,name=blob_size,json=blobSize,proto3" json:"blob_size,omitempty"`
 	// name は, revision の名前. 空の場合は名前なしを表す. 名前はエクスポートやマウントの際にそのままファイル名になるため, どの一般的なファイルシステムでも変更なしに受け入れられる名前だけを受け付ける.
 	// CreateItem または CommitRevision で名前を設定すると, 見た目を変えない修正を自動で施して保存し, レスポンスでは修正後の名前を返す. 修正は, ゼロ幅スペース (U+200B), BOM (U+FEFF), ソフトハイフン (U+00AD) および制御文字の削除, 改行とタブの1つのスペースへの置き換え, 前後の空白の除去, NFC への正規化 (CJK 互換漢字は字体を保つためそのまま残す) である.
 	// 修正後の名前が規則を満たさなければ, INVALID_ARGUMENT を返す. 満たさない規則はすべて, FieldViolationReason の NAME_ で始まる理由として示す. 名前の候補を作成できる場合は, BadRequest と共に詳細情報に NameSuggestion を付与する. expected_head から引き継いだ名前は, 再検証しない.
-	Name          string `protobuf:"bytes,6,opt,name=name,proto3" json:"name,omitempty"`
+	Name string `protobuf:"bytes,6,opt,name=name,proto3" json:"name,omitempty"`
+	// extension_data は, item の extension で指定した拡張機能のみが読み取るデータ. ITEM_KIND_EXTENSION の item の revision にのみ存在する. ListItems では, 1ページの大きさを抑えるため返さない.
+	ExtensionData []byte `protobuf:"bytes,7,opt,name=extension_data,json=extensionData,proto3" json:"extension_data,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -306,20 +321,28 @@ func (x *RevisionContent) GetName() string {
 	return ""
 }
 
+func (x *RevisionContent) GetExtensionData() []byte {
+	if x != nil {
+		return x.ExtensionData
+	}
+	return nil
+}
+
 var File_lyell_api_v1alpha1_item_proto protoreflect.FileDescriptor
 
 const file_lyell_api_v1alpha1_item_proto_rawDesc = "" +
 	"\n" +
-	"\x1dlyell/api/v1alpha1/item.proto\x12\x12lyell.api.v1alpha1\x1a\x1fgoogle/api/field_behavior.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\\\n" +
+	"\x1dlyell/api/v1alpha1/item.proto\x12\x12lyell.api.v1alpha1\x1a\x1fgoogle/api/field_behavior.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"z\n" +
 	"\x04Item\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x120\n" +
 	"\x04kind\x18\x02 \x01(\x0e2\x1c.lyell.api.v1alpha1.ItemKindR\x04kind\x12\x12\n" +
-	"\x04head\x18\x03 \x01(\tR\x04head\"\x8c\x01\n" +
+	"\x04head\x18\x03 \x01(\tR\x04head\x12\x1c\n" +
+	"\textension\x18\x04 \x01(\tR\textension\"\x8c\x01\n" +
 	"\bRevision\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x17\n" +
 	"\aitem_id\x18\x02 \x01(\tR\x06itemId\x12\x18\n" +
 	"\aparents\x18\x03 \x03(\tR\aparents\x12=\n" +
-	"\acontent\x18\x04 \x01(\v2#.lyell.api.v1alpha1.RevisionContentR\acontent\"\x80\x02\n" +
+	"\acontent\x18\x04 \x01(\v2#.lyell.api.v1alpha1.RevisionContentR\acontent\"\xa7\x02\n" +
 	"\x0fRevisionContent\x12A\n" +
 	"\vcreate_time\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampB\x04\xe2A\x01\x03R\n" +
 	"createTime\x12%\n" +
@@ -329,11 +352,13 @@ const file_lyell_api_v1alpha1_item_proto_rawDesc = "" +
 	"\vblob_sha256\x18\x04 \x01(\tR\n" +
 	"blobSha256\x12!\n" +
 	"\tblob_size\x18\x05 \x01(\x03B\x04\xe2A\x01\x03R\bblobSize\x12\x12\n" +
-	"\x04name\x18\x06 \x01(\tR\x04name*T\n" +
+	"\x04name\x18\x06 \x01(\tR\x04name\x12%\n" +
+	"\x0eextension_data\x18\a \x01(\fR\rextensionData*m\n" +
 	"\bItemKind\x12\x19\n" +
 	"\x15ITEM_KIND_UNSPECIFIED\x10\x00\x12\x13\n" +
 	"\x0fITEM_KIND_ASSET\x10\x01\x12\x18\n" +
-	"\x14ITEM_KIND_COLLECTION\x10\x02BAZ?github.com/yamaoki-lab/lyell/gen/lyell/api/v1alpha1;apiv1alpha1b\x06proto3"
+	"\x14ITEM_KIND_COLLECTION\x10\x02\x12\x17\n" +
+	"\x13ITEM_KIND_EXTENSION\x10\x03BAZ?github.com/yamaoki-lab/lyell/gen/lyell/api/v1alpha1;apiv1alpha1b\x06proto3"
 
 var (
 	file_lyell_api_v1alpha1_item_proto_rawDescOnce sync.Once

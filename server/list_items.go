@@ -51,7 +51,12 @@ func (s *itemService) ListItems(ctx context.Context, req *connect.Request[apiv1a
 	}
 	resp := &apiv1alpha1.ListItemsResponse{TotalSize: int32(min(list.TotalSize, math.MaxInt32))}
 	for _, e := range list.Entries {
-		resp.Entries = append(resp.Entries, &apiv1alpha1.ItemEntry{Item: itemToProto(e.Item), HeadRevision: revisionToProto(e.Head)})
+		head := revisionToProto(e.Head)
+		// extension_data は1件あたり最大 16 KiB なので, 1024 件のページでは 16 MiB に達する. 一覧では返さない.
+		if head.Content != nil {
+			head.Content.ExtensionData = nil
+		}
+		resp.Entries = append(resp.Entries, &apiv1alpha1.ItemEntry{Item: itemToProto(e.Item), HeadRevision: head})
 	}
 	if list.More {
 		resp.NextPageToken = encodePageToken(list.Entries[len(list.Entries)-1].Item.ID, sum)
