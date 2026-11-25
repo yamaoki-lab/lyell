@@ -82,7 +82,7 @@ func (s *Store) ListItems(ctx context.Context, o ListOptions) (ItemList, error) 
 	}
 	// 1件多く読み, 続きがあるかを判定する.
 	args = append(args, o.Limit+1)
-	list.Entries, err = scanEntries(ctx, tx, "SELECT items.id, items.kind, items.head, "+contentColumnList+
+	list.Entries, err = scanEntries(ctx, tx, "SELECT items.id, items.kind, items.extension, items.head, "+contentColumnList+
 		" FROM items JOIN revisions ON revisions.id = items.head"+whereClause(where)+
 		" ORDER BY items.id "+order+" LIMIT ?", args)
 	if err != nil {
@@ -162,15 +162,17 @@ func scanEntries(ctx context.Context, tx *sql.Tx, query string, args []any) ([]I
 	var entries []ItemEntry
 	for rows.Next() {
 		var (
-			id, head []byte
-			kind     string
-			cols     contentColumns
+			id, head  []byte
+			kind      string
+			extension sql.NullString
+			cols      contentColumns
 		)
-		if err := rows.Scan(append([]any{&id, &kind, &head}, cols.dest()...)...); err != nil {
+		if err := rows.Scan(append([]any{&id, &kind, &extension, &head}, cols.dest()...)...); err != nil {
 			return nil, err
 		}
 		var e ItemEntry
 		e.Item.Kind = Kind(kind)
+		e.Item.Extension = extension.String
 		if err := scanID(id, &e.Item.ID); err != nil {
 			return nil, err
 		}
