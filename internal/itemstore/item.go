@@ -55,9 +55,9 @@ type Content struct {
 	// AuthorUser と AuthorMachine は, 記録した利用者とマシン. どちらも必須. 認証を経ない経路からの記録では, 両方を "anonymous" にする.
 	AuthorUser    string
 	AuthorMachine string
-	// Blob は, 中身のバイト列 (blob) の SHA-256. 記録した後は, バイト列がローカルに保持されているか (転送の対象から外した場合等) とは無関係である. ローカルに存在するかは blobstore に問い合わせる.
+	// Blob は, 中身のバイト列 (blob) の SHA-256. ゼロ値は, blob を持たないこと (開かれた時に拡張機能が中身を用意する item の revision) を表す. 記録した後は, バイト列がローカルに保持されているか (転送の対象から外した場合等) とは無関係である. ローカルに存在するかは blobstore に問い合わせる.
 	Blob blobstore.Sum
-	// BlobSize は, blob のバイト数. 記録時は itemstore が blobstore から取得した値を入れるので, 渡された値は使用しない.
+	// BlobSize は, blob のバイト数. blob を持たない時は 0. 記録時は itemstore が blobstore から取得した値を入れるので, 渡された値は使用しない.
 	BlobSize int64
 	// Body は, revision の情報を lyell.storage.v1alpha1.RevisionBody で表したバイト列. revision の一次情報で, 上のフィールドはここから作り直せる. 記録する時は, itemstore が上のフィールドの値で Body の同じフィールドを上書きし, 他のフィールド (名前や, この Lyell が知らないもの) はそのまま残す. 空でもよい. 読み取り時には, 記録した body 全体が入る.
 	Body []byte
@@ -184,7 +184,7 @@ func insertRevision(ctx context.Context, tx *sql.Tx, id, itemID ID, c Content) e
 	_, err = tx.ExecContext(ctx, `
 INSERT INTO revisions (id, item_id, created_at, author_user, author_machine, blob_sha256, blob_size, body)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		id[:], itemID[:], cols.createdAt, cols.authorUser, cols.authorMachine, cols.blob, cols.blobSize, body)
+		id[:], itemID[:], cols.createdAt, cols.authorUser, cols.authorMachine, cols.blob, cols.blobSizeColumn(), body)
 	return err
 }
 
@@ -265,7 +265,7 @@ func (c *contentColumns) content(id ID) (*Content, error) {
 	if c.thinned {
 		return nil, nil
 	}
-	// 間引かれていない revision が中身の列を全て持つことは, テーブルの CHECK 制約が保証している.
+	// 間引かれていない revision が記録時刻と作成者の列を持つこと, および blob_sha256 と blob_size が両方あるか両方無いかは, テーブルの CHECK 制約が保証している.
 	body := c.body
 	if body == nil {
 		body = []byte{}
@@ -276,6 +276,10 @@ func (c *contentColumns) content(id ID) (*Content, error) {
 		AuthorMachine: c.authorMachine.String,
 		BlobSize:      c.blobSize.Int64,
 		Body:          body,
+	}
+	// blob を持たない revision では, Blob はゼロ値のまま (blob_size も NULL なので BlobSize は 0).
+	if c.blob == nil {
+		return content, nil
 	}
 	if len(c.blob) != len(content.Blob) {
 		return nil, fmt.Errorf("revision %s の blob_sha256 のバイト数が不正です (%d バイト)", id, len(c.blob))
@@ -320,6 +324,11 @@ func (k Kind) validate() error {
 		return nil
 	}
 	return fmt.Errorf("%w: item 種別 %q は不明です", ErrInvalid, k)
+}
+
+// hasBlob は, 中身が blob を持つかを返す.
+func (c Content) hasBlob() bool {
+	return c.Blob != blobstore.Sum{}
 }
 
 func (c Content) validate() error {

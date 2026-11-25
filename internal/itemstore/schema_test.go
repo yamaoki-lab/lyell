@@ -14,7 +14,7 @@ import (
 //
 // 公開とは, 最初のタグ (v0.1.0) を打つこと. それより前に変更する時は, 意図した変更であることを示すため, ここの値も更新する.
 var releasedSchemaFiles = map[string]string{
-	"schema/0001.sql": "06990940c00d058483788ae29a807bd50a643b083a66f09f862b28c6c2a71431",
+	"schema/0001.sql": "0ecf3cc662ee7df922e848387cff7bb58e6e3fa4d3e9ebeee2b4829940863b21",
 }
 
 func TestSchemaFiles_ReleasedAreUnchanged(t *testing.T) {

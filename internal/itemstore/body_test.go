@@ -3,6 +3,7 @@ package itemstore
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
 	"strings"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	storagev1alpha1 "github.com/yamaoki-lab/lyell/gen/lyell/storage/v1alpha1"
+	"github.com/yamaoki-lab/lyell/internal/blobstore"
 )
 
 // unknownField は, この Lyell の RevisionBody に無い番号のフィールド. 新しい Lyell が書いた body を, 古い Lyell が読み書きする場面を再現する.
@@ -130,5 +132,70 @@ func assertColumnsMatchBody(t *testing.T, s *Store) {
 	}
 	if n == 0 {
 		t.Fatalf("確かめた revision が無い")
+	}
+}
+
+func TestEncodeBody_WithoutBlobLeavesBlobFieldsEmpty(t *testing.T) {
+	c := testContent("")
+	c.Blob = blobstore.Sum{}
+	c.BlobSize = 5 // blob を持たない時は, 渡された大きさを書かない
+	body, err := encodeBody(c)
+	if err != nil {
+		t.Fatalf("encodeBody() error = %v, want nil", err)
+	}
+	var b storagev1alpha1.RevisionBody
+	if err := proto.Unmarshal(body, &b); err != nil {
+		t.Fatalf("body を読めない: %v", err)
+	}
+	if len(b.GetBlobSha256()) != 0 || b.GetBlobSize() != 0 {
+		t.Errorf("body の blob_sha256 = %x, blob_size = %d, want 空, 0", b.GetBlobSha256(), b.GetBlobSize())
+	}
+	cols, err := columnsFromBody(body)
+	if err != nil {
+		t.Fatalf("columnsFromBody() error = %v, want nil", err)
+	}
+	if cols.blob != nil || cols.blobSizeColumn() != nil {
+		t.Errorf("列の blob_sha256 = %x, blob_size = %v, want NULL, NULL", cols.blob, cols.blobSizeColumn())
+	}
+}
+
+func TestRevision_ReadsRevisionWithoutBlob(t *testing.T) {
+	s, _ := openTestStore(t)
+	ctx := context.Background()
+	c := testContent("")
+	c.Blob = blobstore.Sum{}
+	err := inTx(t, s, func(tx *sql.Tx) error {
+		if _, err := tx.Exec("INSERT INTO items (id, kind, head) VALUES (?, 'asset', ?)", testID(1), testID(2)); err != nil {
+			return err
+		}
+		return insertRevision(ctx, tx, ID(testID(2)), ID(testID(1)), c)
+	})
+	if err != nil {
+		t.Fatalf("blob を持たない revision を記録できない: %v", err)
+	}
+	var null bool
+	if err := s.read.QueryRow("SELECT blob_sha256 IS NULL AND blob_size IS NULL FROM revisions").Scan(&null); err != nil || !null {
+		t.Errorf("blob_sha256 と blob_size が NULL か = %v (error = %v), want true", null, err)
+	}
+
+	rev, err := s.Revision(ctx, ID(testID(2)))
+	if err != nil {
+		t.Fatalf("Revision() error = %v, want nil", err)
+	}
+	if rev.Content == nil || rev.Content.Blob != (blobstore.Sum{}) || rev.Content.BlobSize != 0 {
+		t.Errorf("Revision().Content = %+v, want blob 無し", rev.Content)
+	}
+	assertColumnsMatchBody(t, s)
+}
+
+func TestColumnsFromBody_ExplicitEmptyBlobIsNull(t *testing.T) {
+	// 他の実装が書いた body は, 長さ0の blob_sha256 を明示的に持つことがある. 列には長さ0の BLOB ではなく NULL を書く.
+	body := protowire.AppendBytes(protowire.AppendTag(nil, 4, protowire.BytesType), nil)
+	cols, err := columnsFromBody(body)
+	if err != nil {
+		t.Fatalf("columnsFromBody() error = %v, want nil", err)
+	}
+	if cols.blob != nil || cols.blobSizeColumn() != nil {
+		t.Errorf("列の blob_sha256 = %#v, blob_size = %v, want NULL, NULL", cols.blob, cols.blobSizeColumn())
 	}
 }

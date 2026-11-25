@@ -30,7 +30,8 @@ CREATE INDEX items_kind_id
 CREATE TABLE revisions (
   -- revision の記録.
   --
-  -- 中身 (created_at から body まで) は, 間引くと NULL になり, ID と親だけが残る. 間引かれていない (body が NULL でない) なら他の中身の列も必ず値を持つ, という一方向の CHECK にする. 間引いた後にどの列を残すかを後から変えても, テーブルを作り直さずに済む.
+  -- 中身 (created_at から body まで) は, 間引くと NULL になり, ID と親だけが残る. 間引かれていない (body が NULL でない) なら記録時刻と作成者の列も必ず値を持つ, という一方向の CHECK にする. 間引いた後にどの列を残すかを後から変えても, テーブルを作り直さずに済む.
+  -- blob_sha256 と blob_size は, 両方が値を持つか, 両方が NULL かのどちらか. 間引かれていない revision でも, 開かれた時に拡張機能が中身を用意する item の revision は blob を持たない. どの種類の item の revision が blob を持つかは, 種類が増えた時にテーブルを作り直さずに済むよう, Go の側で検査する.
   -- blob_sha256 は blob への参照で, バイト列が手元にあるか (転送の対象から外した場合等) とは独立している. 手元にあるかは記録せず, その都度 blobstore に問い合わせる.
   -- blob_size も記録する. 作業コピーを OS のファイルシステムとして見せる時に, 一覧を表示するたびに blob のサイズを問い合わせることを避けるため. blob が手元に無いマシンでも答えられる.
   -- 主キーの NOT NULL: SQLite は過去との互換性のため, 行番号を持つテーブルの主キーに NULL を許してしまう.
@@ -45,7 +46,8 @@ CREATE TABLE revisions (
   blob_size      INTEGER CHECK (blob_size >= 0),  -- blob のバイト数
   body           BLOB,     -- Protobuf. これが正であり, 上の5列は body から再計算できる. 空のメッセージは長さ0 (NULL ではない)
   UNIQUE (item_id, id),
-  CHECK (body IS NULL OR (created_at IS NOT NULL AND author_user IS NOT NULL AND author_machine IS NOT NULL AND blob_sha256 IS NOT NULL AND blob_size IS NOT NULL))
+  CHECK (body IS NULL OR (created_at IS NOT NULL AND author_user IS NOT NULL AND author_machine IS NOT NULL)),
+  CHECK ((blob_sha256 IS NULL) = (blob_size IS NULL))
 ) STRICT;
 
 CREATE TABLE revision_parents (

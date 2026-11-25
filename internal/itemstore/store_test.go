@@ -502,16 +502,40 @@ func TestSchema_LiveRevisionMustBeComplete(t *testing.T) {
 	}
 	sha := make([]byte, 32)
 
-	// body があるのに blob への参照が無い revision は断る.
-	if err := insert(int64(0), "user", "machine", nil, int64(0), []byte{0}); err == nil || !strings.Contains(err.Error(), "CHECK") {
-		t.Errorf("blob_sha256 の無い revision の error = %v, want CHECK", err)
+	// body があるのに記録時刻や作成者が無い revision は断る.
+	if err := insert(nil, "user", "machine", sha, int64(0), []byte{0}); err == nil || !strings.Contains(err.Error(), "CHECK") {
+		t.Errorf("created_at の無い revision の error = %v, want CHECK", err)
 	}
-	// body があるのに blob の大きさが無い revision も断る. 大きさが無いと, ファイルシステムとして見せる時に答えられない.
+	if err := insert(int64(0), nil, "machine", sha, int64(0), []byte{0}); err == nil || !strings.Contains(err.Error(), "CHECK") {
+		t.Errorf("author_user の無い revision の error = %v, want CHECK", err)
+	}
+	if err := insert(int64(0), "user", nil, sha, int64(0), []byte{0}); err == nil || !strings.Contains(err.Error(), "CHECK") {
+		t.Errorf("author_machine の無い revision の error = %v, want CHECK", err)
+	}
+	// blob への参照があるのに大きさが無い revision は断る. 大きさが無いと, ファイルシステムとして見せる時に答えられない.
 	if err := insert(int64(0), "user", "machine", sha, nil, []byte{0}); err == nil || !strings.Contains(err.Error(), "CHECK") {
 		t.Errorf("blob_size の無い revision の error = %v, want CHECK", err)
 	}
+	// 大きさだけがあって blob への参照が無い revision も断る.
+	if err := insert(int64(0), "user", "machine", nil, int64(0), []byte{0}); err == nil || !strings.Contains(err.Error(), "CHECK") {
+		t.Errorf("blob_sha256 の無い revision の error = %v, want CHECK", err)
+	}
 	if err := insert(int64(0), "user", "machine", sha, int64(-1), []byte{0}); err == nil || !strings.Contains(err.Error(), "CHECK") {
 		t.Errorf("blob_size が負の revision の error = %v, want CHECK", err)
+	}
+	// blob を持たない revision (拡張機能が中身を用意する item) は通す. kind との組み合わせは Go の側で検査する.
+	if err := insert(int64(0), "user", "machine", nil, nil, []byte{0}); err != nil {
+		t.Errorf("blob を持たない revision の error = %v, want nil", err)
+	}
+	// 次の骨格は同じ ID で入れるので, 消しておく.
+	if err := inTx(t, s, func(tx *sql.Tx) error {
+		if _, err := tx.Exec("DELETE FROM items"); err != nil {
+			return err
+		}
+		_, err := tx.Exec("DELETE FROM revisions")
+		return err
+	}); err != nil {
+		t.Fatalf("DELETE error = %v, want nil", err)
 	}
 	// 間引いて作成者だけを残した骨格は, 将来の選択肢として通す.
 	if err := insert(nil, "user", nil, nil, nil, nil); err != nil {
