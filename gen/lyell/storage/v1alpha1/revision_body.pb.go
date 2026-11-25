@@ -33,12 +33,14 @@ type RevisionBody struct {
 	AuthorUser string `protobuf:"bytes,2,opt,name=author_user,json=authorUser,proto3" json:"author_user,omitempty"`
 	// author_machine は, 記録したマシン.
 	AuthorMachine string `protobuf:"bytes,3,opt,name=author_machine,json=authorMachine,proto3" json:"author_machine,omitempty"`
-	// blob_sha256 は, 中身のバイト列 (blob) の SHA-256 (32 バイト).
+	// blob_sha256 は, 中身のバイト列 (blob) の SHA-256 (32 バイト). 開かれた時に拡張機能が中身を用意する item (extension) の revision は blob を持たず, 空になる.
 	BlobSha256 []byte `protobuf:"bytes,4,opt,name=blob_sha256,json=blobSha256,proto3" json:"blob_sha256,omitempty"`
-	// blob_size は, 中身のバイト列のサイズ (バイト).
+	// blob_size は, 中身のバイト列のサイズ (バイト). blob を持たない revision では 0.
 	BlobSize int64 `protobuf:"varint,5,opt,name=blob_size,json=blobSize,proto3" json:"blob_size,omitempty"`
 	// name は, revision の名前. 空の時は, 名前が無い.
-	Name          string `protobuf:"bytes,6,opt,name=name,proto3" json:"name,omitempty"`
+	Name string `protobuf:"bytes,6,opt,name=name,proto3" json:"name,omitempty"`
+	// extension_data は, 開かれた時に拡張機能が中身を用意する item (extension) の revision が持つ, その拡張機能だけが読むデータ. 意味は拡張機能が決め, Lyell は保存して revision から revision へ引き継ぐだけである. blob の代わりとなる中身の定義なので, 中身に付く注釈とは別の専用のフィールドにする. 他の種類の item の revision では空.
+	ExtensionData []byte `protobuf:"bytes,7,opt,name=extension_data,json=extensionData,proto3" json:"extension_data,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -115,11 +117,18 @@ func (x *RevisionBody) GetName() string {
 	return ""
 }
 
+func (x *RevisionBody) GetExtensionData() []byte {
+	if x != nil {
+		return x.ExtensionData
+	}
+	return nil
+}
+
 var File_lyell_storage_v1alpha1_revision_body_proto protoreflect.FileDescriptor
 
 const file_lyell_storage_v1alpha1_revision_body_proto_rawDesc = "" +
 	"\n" +
-	"*lyell/storage/v1alpha1/revision_body.proto\x12\x16lyell.storage.v1alpha1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xe5\x01\n" +
+	"*lyell/storage/v1alpha1/revision_body.proto\x12\x16lyell.storage.v1alpha1\x1a\x1fgoogle/protobuf/timestamp.proto\"\x8c\x02\n" +
 	"\fRevisionBody\x12;\n" +
 	"\vcreate_time\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"createTime\x12\x1f\n" +
@@ -129,7 +138,8 @@ const file_lyell_storage_v1alpha1_revision_body_proto_rawDesc = "" +
 	"\vblob_sha256\x18\x04 \x01(\fR\n" +
 	"blobSha256\x12\x1b\n" +
 	"\tblob_size\x18\x05 \x01(\x03R\bblobSize\x12\x12\n" +
-	"\x04name\x18\x06 \x01(\tR\x04nameBIZGgithub.com/yamaoki-lab/lyell/gen/lyell/storage/v1alpha1;storagev1alpha1b\x06proto3"
+	"\x04name\x18\x06 \x01(\tR\x04name\x12%\n" +
+	"\x0eextension_data\x18\a \x01(\fR\rextensionDataBIZGgithub.com/yamaoki-lab/lyell/gen/lyell/storage/v1alpha1;storagev1alpha1b\x06proto3"
 
 var (
 	file_lyell_storage_v1alpha1_revision_body_proto_rawDescOnce sync.Once

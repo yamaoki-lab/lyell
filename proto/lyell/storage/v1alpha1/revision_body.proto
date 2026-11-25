@@ -16,10 +16,12 @@ message RevisionBody {
   string author_user = 2;
   // author_machine は, 記録したマシン.
   string author_machine = 3;
-  // blob_sha256 は, 中身のバイト列 (blob) の SHA-256 (32 バイト).
+  // blob_sha256 は, 中身のバイト列 (blob) の SHA-256 (32 バイト). 開かれた時に拡張機能が中身を用意する item (extension) の revision は blob を持たず, 空になる.
   bytes blob_sha256 = 4;
-  // blob_size は, 中身のバイト列のサイズ (バイト).
+  // blob_size は, 中身のバイト列のサイズ (バイト). blob を持たない revision では 0.
   int64 blob_size = 5;
   // name は, revision の名前. 空の時は, 名前が無い.
   string name = 6;
+  // extension_data は, 開かれた時に拡張機能が中身を用意する item (extension) の revision が持つ, その拡張機能だけが読むデータ. 意味は拡張機能が決め, Lyell は保存して revision から revision へ引き継ぐだけである. blob の代わりとなる中身の定義なので, 中身に付く注釈とは別の専用のフィールドにする. 他の種類の item の revision では空.
+  bytes extension_data = 7;
 }
