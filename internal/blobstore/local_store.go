@@ -21,52 +21,58 @@ func NewLocalStore(root string) *LocalStore {
 	return &LocalStore{root: root}
 }
 
-// Put は, 同じファイルシステム上の一時ディレクトリ (root/.tmp/) に data を書き込み, 書き込みを終えてから rename で最終的なパスへ移動する. rename は同じファイルシステム内でのみアトミックなので, システムの一時ディレクトリ (os.TempDir) は使用しない.
+// Put は, 同じファイルシステム上の一時ディレクトリ (root/.tmp/) に data を書き込み, 書き込みを終えてから最終的なパスへ置く. 置く操作は同じファイルシステム内でのみアトミックなので, システムの一時ディレクトリ (os.TempDir) は使用しない.
 //
-// Put が nil を返した時点で, データの内容とパスはディスクに永続化されている. 呼び出し側は, その後に DB へ記録してよい. そのために, rename の前にファイルを fsync し, rename の後に配置先のディレクトリを fsync する. 新しく作成したディレクトリも, その親ディレクトリを fsync する.
+// 置く操作は, 最終的なパスが既にあれば失敗する操作 (POSIX ではハードリンクの作成, Windows では置き換えを許さない MoveFile) を使う. 既にあれば置き換えずに false を返す. 存在の確認と配置が1つの操作なので, 保存先を共有する別の LocalStore や別のプロセスとの間でも, 同じ sum に true を返すのは1つだけになる. 転送の間はロックを持たないので, 止まった Put が同じ sum への他の Put を待たせることは無い. ハードリンクを使えないファイルシステムでの扱いは placeTemp に書いた.
+//
+// Put がエラーなしで返った時点で, データの内容とパスはディスクに永続化されている. 呼び出し側は, その後に DB へ記録してよい. そのために, 置く前にファイルを fsync し, 置いた後に配置先のディレクトリを fsync する. 新しく作成したディレクトリも, その親ディレクトリを fsync する. false を返す時は, 既にある blob を置いた Put が永続化を済ませている (別のプロセスが置いた blob で, その Put がまだ fsync を終えていない場合は除く).
 //
 // blob は読み取り専用 (0444) で作成する. 名前は中身の SHA-256 なので, 作成後に中身が書き換えられると, 名前との不一致を検知できなくなる. 書き込みを終えたら fsync の前に, 一時ファイルの段階でパーミッションを 0444 に変更するので, 書き込み可能な blob が最終的なパスに存在することは無い. Windows では読み取り専用の属性が付く.
 //
 // LocalStore は保存先が1つであり, 書き込みのオプションを一切サポートしないため, opts は使用しない.
-func (s *LocalStore) Put(_ context.Context, sum Sum, data io.Reader, _ ...PutOption) error {
+func (s *LocalStore) Put(ctx context.Context, sum Sum, data io.Reader, _ ...PutOption) (created bool, err error) {
 	finalPath := s.path(sum)
 	if err := mkdirAllDurable(filepath.Dir(finalPath)); err != nil {
-		return err
+		return false, err
 	}
 
 	stagingDir := filepath.Join(s.root, ".tmp")
 	if err := os.MkdirAll(stagingDir, 0o755); err != nil {
-		return err
+		return false, err
 	}
 
 	tmp, err := os.CreateTemp(stagingDir, "put-*")
 	if err != nil {
-		return err
+		return false, err
 	}
 	tmpPath := tmp.Name()
-	// rename に成功していれば tmpPath は既に存在しないので, ここの Remove は単にエラーを返すのみとなる (無視して差し支えない). 途中で失敗した場合は, ここで一時ファイルを削除する.
-	defer func() { _ = os.Remove(tmpPath) }()
+	// 置き終えた後も, ハードリンクで置いた時や既にあった時は一時ファイルの名前が残るので, ここで消す. rename で置いた時は既に存在しないので, ここの削除は単にエラーを返すのみとなる (無視して差し支えない). 途中で失敗した場合も, ここで一時ファイルを削除する.
+	defer func() { _ = removeTemp(tmpPath) }()
 
 	if _, err := io.Copy(tmp, data); err != nil {
 		_ = tmp.Close()
-		return err
+		return false, err
 	}
 	if err := tmp.Chmod(0o444); err != nil {
 		_ = tmp.Close()
-		return err
+		return false, err
 	}
 	if err := tmp.Sync(); err != nil {
 		_ = tmp.Close()
-		return err
+		return false, err
 	}
 	if err := tmp.Close(); err != nil {
-		return err
+		return false, err
 	}
 
-	if err := os.Rename(tmpPath, finalPath); err != nil {
-		return err
+	created, err = s.placeTemp(ctx, sum, tmpPath, finalPath)
+	if err != nil || !created {
+		return false, err
 	}
-	return syncDir(filepath.Dir(finalPath))
+	if err := syncDir(filepath.Dir(finalPath)); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // CheckPutOptions は, 必須のオプションがあれば拒否し, 任意のオプションは無視する. LocalStore は書き込みのオプションを一切サポートしないため.
