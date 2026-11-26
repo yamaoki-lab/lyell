@@ -112,7 +112,7 @@ func TestValidateOnly(t *testing.T) {
 	})
 
 	t.Run("マージの応答を返し head を進めない", func(t *testing.T) {
-		// 保存済み revision は親を ID 順で返すため, リクエストでは逆順に指定する.
+		// 保存済み revision は同じ item の親を先に返すため, リクエストでは他の item の親を先に指定する.
 		req.Parents = []string{other, head}
 		got, err := c.CommitRevision(ctx, connect.NewRequest(req))
 		if err != nil {

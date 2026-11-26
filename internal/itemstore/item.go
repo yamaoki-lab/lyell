@@ -1,12 +1,14 @@
 package itemstore
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -52,7 +54,7 @@ type Item struct {
 	Head      ID // 現在指している revision
 }
 
-// Content は, revision の中身. 間引くと全て削除され, ID と親だけが残る.
+// Content は, revision の中身. 間引くと全て削除され, ID と一部のリンク (親を含む) だけが残る.
 type Content struct {
 	// CreatedAt は, revision を記録した時刻. DB にはミリ秒単位で保存するので, それより細かい部分は切り捨てる. 中身が表す本来の日時は Body に持たせる.
 	CreatedAt time.Time
@@ -309,9 +311,22 @@ func (c *contentColumns) content(id ID) (*Content, error) {
 	return content, nil
 }
 
-// readParents は, revision id の親を ID 順に返す. 最初の revision なら nil を返す.
+// linkTypeParent と linkTypeParentMajor は, 親を記録するリンクの型 (0001.sql の link_types).
+const (
+	linkTypeParent      = "parent"
+	linkTypeParentMajor = 1
+)
+
+// readParents は, revision id の親 (parent 型のリンクのリンク先) を返す. 最初の revision なら nil を返す.
+//
+// 親は, id と同じ item の revision を先に, その中は ID 順に並べる (parentOrder と同じ順序). リンク先はこのマシンに無いこともあり, 無い親は item が分からないので最後に置く.
 func readParents(ctx context.Context, tx *sql.Tx, id ID) ([]ID, error) {
-	rows, err := tx.QueryContext(ctx, "SELECT parent_id FROM revision_parents WHERE revision_id = ? ORDER BY parent_id", id[:])
+	// リンク先の行が無くても親を落とさないよう, LEFT JOIN にする. 同じ item の親, 別の item の親, 無い親 (t.item_id が NULL) の順に並べる.
+	rows, err := tx.QueryContext(ctx, `SELECT l.target_revision FROM revision_links l
+		JOIN revisions s ON s.id = l.source_revision
+		LEFT JOIN revisions t ON t.id = l.target_revision
+		WHERE l.source_revision = ? AND l.type_name = ? AND l.type_major = ?
+		ORDER BY t.item_id IS NOT s.item_id, t.item_id IS NULL, l.target_revision`, id[:], linkTypeParent, linkTypeParentMajor)
 	if err != nil {
 		return nil, err
 	}
@@ -329,6 +344,30 @@ func readParents(ctx context.Context, tx *sql.Tx, id ID) ([]ID, error) {
 		parents = append(parents, parent)
 	}
 	return parents, rows.Err()
+}
+
+// parentOrder は, 親の並び順を返す. 親は2つまでで, 1つは同じ item の From, もう1つは統合される側の item の revision なので, 順序の列を持たずに, 同じ item の親を先にする. 3つ以上を許す時は, 順序の列を足す (0001.sql の revision_links).
+//
+// 同じ item の親, 別の item の親, item が分からない (このマシンに無い) 親の順で, それぞれの中は ID 順. itemOf は親の item を返し, 分からなければ ok を false にする.
+func parentOrder(itemID ID, parents []ID, itemOf func(ID) (ID, bool)) []ID {
+	rank := func(p ID) int {
+		item, ok := itemOf(p)
+		switch {
+		case !ok:
+			return 2
+		case item == itemID:
+			return 0
+		}
+		return 1
+	}
+	sorted := slices.Clone(parents)
+	slices.SortFunc(sorted, func(a, b ID) int {
+		if c := rank(a) - rank(b); c != 0 {
+			return c
+		}
+		return bytes.Compare(a[:], b[:])
+	})
+	return sorted
 }
 
 func scanID(raw []byte, id *ID) error {

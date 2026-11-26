@@ -46,7 +46,7 @@ func TestCheck_FindsViolationWrittenWithoutForeignKeys(t *testing.T) {
 		t.Fatalf("sql.Open() error = %v, want nil", err)
 	}
 	defer func() { _ = raw.Close() }()
-	if _, err := raw.Exec("INSERT INTO revision_parents (revision_id, parent_id) VALUES (?, ?)", testID(1), testID(2)); err != nil {
+	if _, err := raw.Exec("INSERT INTO revision_links (source_revision, target_revision, type_name, type_major) VALUES (?, ?, 'parent', 1)", testID(1), testID(2)); err != nil {
 		t.Fatalf("検査の無い接続での INSERT error = %v, want nil (エラーにならないことが問題)", err)
 	}
 	buf.Reset()
@@ -59,8 +59,8 @@ func TestCheck_FindsViolationWrittenWithoutForeignKeys(t *testing.T) {
 		t.Fatalf("Check() = %+v, want 外部キーの違反", r)
 	}
 	for _, v := range r.ForeignKeys {
-		if v.Table != "revision_parents" || v.Parent != "revisions" {
-			t.Errorf("違反 = %+v, want revision_parents から revisions", v)
+		if v.Table != "revision_links" || v.Parent != "revisions" {
+			t.Errorf("違反 = %+v, want revision_links から revisions", v)
 		}
 	}
 	if recs := readLog(t, &buf); len(recs) != 1 || recs[0].Level != "ERROR" {

@@ -162,7 +162,7 @@ func TestOpen_SQLiteIsNewEnough(t *testing.T) {
 
 func TestOpen_AppliesSchemaOnceAndWithoutBackupWhenNew(t *testing.T) {
 	s, path := openTestStore(t)
-	for _, table := range []string{"items", "revisions", "revision_parents"} {
+	for _, table := range []string{"items", "revisions", "link_types", "revision_links"} {
 		var name string
 		if err := s.read.QueryRow("SELECT name FROM sqlite_schema WHERE type = 'table' AND name = ?", table).Scan(&name); err != nil {
 			t.Errorf("表 %s が無い: %v", table, err)
@@ -320,7 +320,7 @@ func TestSchema_IsStrict(t *testing.T) {
 	s, _ := openTestStore(t)
 	ctx := context.Background()
 
-	// items の外部キーは延期されるので, トランザクションの中なら, INSERT で失敗するのは型だけになる.
+	// items の外部キーの検査は遅延されるので, トランザクションの中なら, INSERT で失敗するのは型だけになる.
 	tx, err := s.write.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginTx() error = %v, want nil", err)
@@ -336,10 +336,10 @@ func TestSchema_IsStrict(t *testing.T) {
 
 func TestSchema_ForeignKeysAreEnforced(t *testing.T) {
 	s, _ := openTestStore(t)
-	// revision_parents の外部キーは延期しないので, 無い revision を指すとこの文で失敗する.
-	_, err := s.write.Exec("INSERT INTO revision_parents (revision_id, parent_id) VALUES (?, ?)", testID(1), testID(2))
+	// revision_links のリンク元の外部キーの検査は遅延させないので, 無い revision をリンク元にするとこの文で失敗する.
+	_, err := s.write.Exec("INSERT INTO revision_links (source_revision, target_revision, type_name, type_major) VALUES (?, ?, 'parent', 1)", testID(1), testID(2))
 	if err == nil || !strings.Contains(err.Error(), "FOREIGN KEY") {
-		t.Errorf("無い revision を指した時の error = %v, want FOREIGN KEY", err)
+		t.Errorf("無い revision をリンク元にした時の error = %v, want FOREIGN KEY", err)
 	}
 }
 
@@ -353,7 +353,7 @@ func TestSchema_DeferredForeignKeysAreCheckedAtCommit(t *testing.T) {
 		t.Fatalf("BeginTx() error = %v, want nil", err)
 	}
 	if _, err := tx.Exec("INSERT INTO items (id, kind, head) VALUES (?, 'asset', ?)", testID(1), testID(2)); err != nil {
-		t.Fatalf("延期される INSERT の error = %v, want nil", err)
+		t.Fatalf("検査が遅延される INSERT の error = %v, want nil", err)
 	}
 	if err := tx.Commit(); err == nil || !strings.Contains(err.Error(), "FOREIGN KEY") {
 		t.Errorf("Commit() error = %v, want FOREIGN KEY", err)
@@ -459,7 +459,7 @@ func TestSchema_ParentMayBelongToAnotherItem(t *testing.T) {
 			func() error { return insertTestItem(tx, itemB, headB) },
 			func() error { return insertTestRevision(tx, merged, itemB) },
 			func() error {
-				_, err := tx.Exec("INSERT INTO revision_parents VALUES (?, ?), (?, ?)", merged, headA, merged, headB)
+				_, err := tx.Exec("INSERT INTO revision_links (source_revision, target_revision, type_name, type_major) VALUES (?, ?, 'parent', 1), (?, ?, 'parent', 1)", merged, headA, merged, headB)
 				return err
 			},
 			func() error {
@@ -475,15 +475,6 @@ func TestSchema_ParentMayBelongToAnotherItem(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("統合の error = %v, want nil", err)
-	}
-
-	// 統合で親として指されている A の revision は, 消せない.
-	err = inTx(t, s, func(tx *sql.Tx) error {
-		_, err := tx.Exec("DELETE FROM revisions WHERE id = ?", headA)
-		return err
-	})
-	if err == nil || !strings.Contains(err.Error(), "FOREIGN KEY") {
-		t.Errorf("親として指されている revision を消した error = %v, want FOREIGN KEY", err)
 	}
 }
 
@@ -547,16 +538,18 @@ func TestSchema_Layout(t *testing.T) {
 	s, _ := openTestStore(t)
 
 	// WITHOUT ROWID の表には, 行番号の列が無い.
-	for _, table := range []string{"items", "revision_parents"} {
+	for _, table := range []string{"items", "link_types"} {
 		if _, err := s.read.Exec("SELECT rowid FROM " + table); err == nil {
 			t.Errorf("%s に行番号がある, want WITHOUT ROWID", table)
 		}
 	}
-	if _, err := s.read.Exec("SELECT rowid FROM revisions"); err != nil {
-		t.Errorf("revisions に行番号が無い: %v", err)
+	for _, table := range []string{"revisions", "revision_links"} {
+		if _, err := s.read.Exec("SELECT rowid FROM " + table); err != nil {
+			t.Errorf("%s に行番号が無い: %v", table, err)
+		}
 	}
 
-	for _, index := range []string{"items_head", "revision_parents_parent_id"} {
+	for _, index := range []string{"items_head", "revision_links_target_revision", "revision_links_target_item", "revision_links_source_revision"} {
 		var name string
 		if err := s.read.QueryRow("SELECT name FROM sqlite_schema WHERE type = 'index' AND name = ?", index).Scan(&name); err != nil {
 			t.Errorf("索引 %s が無い: %v", index, err)

@@ -1,13 +1,11 @@
 package itemstore
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
 	"io"
-	"slices"
 
 	"github.com/yamaoki-lab/lyell/internal/blobstore"
 )
@@ -71,14 +69,14 @@ func (s *Store) CommitRevision(ctx context.Context, r NewRevision) (ID, error) {
 	}
 	defer func() { _ = tx.Rollback() }() // Commit の後は何もしない
 
-	if err := validateRevisionTarget(ctx, tx, r); err != nil {
+	if _, err := validateRevisionTarget(ctx, tx, r); err != nil {
 		return ID{}, err
 	}
 	if err := insertRevision(ctx, tx, revID, r.ItemID, r.Content); err != nil {
 		return ID{}, err
 	}
 	for _, p := range r.Parents {
-		if _, err := tx.ExecContext(ctx, "INSERT INTO revision_parents (revision_id, parent_id) VALUES (?, ?)", revID[:], p[:]); err != nil {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO revision_links (source_revision, target_revision, type_name, type_major) VALUES (?, ?, ?, ?)", revID[:], p[:], linkTypeParent, linkTypeParentMajor); err != nil {
 			return ID{}, fmt.Errorf("親 %s を記録できませんでした: %w", p, err)
 		}
 	}
@@ -109,12 +107,15 @@ func (s *Store) ValidateCommitRevision(ctx context.Context, r NewRevision) (Revi
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if err := validateRevisionTarget(ctx, tx, r); err != nil {
+	parentItems, err := validateRevisionTarget(ctx, tx, r)
+	if err != nil {
 		return Revision{}, err
 	}
-	// Revision と同じく, 親は ID 順で返す.
-	parents := slices.Clone(r.Parents)
-	slices.SortFunc(parents, func(a, b ID) int { return bytes.Compare(a[:], b[:]) })
+	// Revision と同じく, 同じ item の親を先に, その中は ID 順に返す. 親は全て存在することを検証済み.
+	parents := parentOrder(r.ItemID, r.Parents, func(p ID) (ID, bool) {
+		item, ok := parentItems[p]
+		return item, ok
+	})
 	return Revision{ItemID: r.ItemID, Parents: parents, Content: &r.Content}, nil
 }
 
@@ -148,33 +149,40 @@ func (s *Store) prepareRevision(ctx context.Context, r NewRevision) (NewRevision
 	return r, nil
 }
 
-// validateRevisionTarget は, 同じスナップショットで親の存在と現在の head を検証する.
-func validateRevisionTarget(ctx context.Context, tx *sql.Tx, r NewRevision) error {
+// validateRevisionTarget は, 同じスナップショットで親の存在と現在の head を検証する. 親ごとに, その revision が属する item を返す (ValidateCommitRevision で親を並べるため).
+func validateRevisionTarget(ctx context.Context, tx *sql.Tx, r NewRevision) (map[ID]ID, error) {
+	parentItems := make(map[ID]ID, len(r.Parents))
 	for _, p := range r.Parents {
-		var exists bool
-		if err := tx.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM revisions WHERE id = ?)", p[:]).Scan(&exists); err != nil {
-			return err
+		var raw []byte
+		err := tx.QueryRowContext(ctx, "SELECT item_id FROM revisions WHERE id = ?", p[:]).Scan(&raw)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("親 revision %s: %w", p, ErrNotFound)
 		}
-		if !exists {
-			return fmt.Errorf("親 revision %s: %w", p, ErrNotFound)
+		if err != nil {
+			return nil, err
 		}
+		var item ID
+		if err := scanID(raw, &item); err != nil {
+			return nil, err
+		}
+		parentItems[p] = item
 	}
 	var raw []byte
 	err := tx.QueryRowContext(ctx, "SELECT head FROM items WHERE id = ?", r.ItemID[:]).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("item %s: %w", r.ItemID, ErrNotFound)
+		return nil, fmt.Errorf("item %s: %w", r.ItemID, ErrNotFound)
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var head ID
 	if err := scanID(raw, &head); err != nil {
-		return err
+		return nil, err
 	}
 	if head != r.From {
-		return &NotFastForwardError{ItemID: r.ItemID, From: r.From, Head: head}
+		return nil, &NotFastForwardError{ItemID: r.ItemID, From: r.From, Head: head}
 	}
-	return nil
+	return parentItems, nil
 }
 
 // maxParents は, 1つの revision が持てる parents の数の上限. fast-forward の parents は1つ, 統合の parents は2つで, 3つ以上を一度に統合する操作は存在しない. 上限が無いと, 1回の CommitRevision で大量の parents を記録でき, その間は唯一の書き込み接続を占有し続ける.
