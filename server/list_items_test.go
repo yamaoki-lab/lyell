@@ -153,6 +153,7 @@ func TestListItems_Filter(t *testing.T) {
 	}{
 		{name: "kind", filter: "item.kind = ITEM_KIND_ASSET", want: ids},
 		{name: "collection は作成できないので空", filter: "item.kind = ITEM_KIND_COLLECTION"},
+		{name: "extension は作成できないので空", filter: "item.kind = ITEM_KIND_EXTENSION"},
 		{name: "以降", filter: fmt.Sprintf("head_revision.content.create_time >= %q", at(1)), want: ids[1:]},
 		{name: "より後", filter: fmt.Sprintf("head_revision.content.create_time > %q", at(1)), want: ids[2:]},
 		{name: "より前", filter: fmt.Sprintf("head_revision.content.create_time < %q", at(1)), want: ids[:1]},

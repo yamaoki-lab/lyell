@@ -20,6 +20,18 @@ func bodyName(body []byte) string {
 	return b.GetName()
 }
 
+// extensionDataField は, RevisionContent の extension_data のフィールド名. updatedFields が返す集合を調べる時に使う.
+const extensionDataField = "extension_data"
+
+// bodyExtensionData は, revision の body に保存された, 拡張機能のみが読み取るデータを返す. 読めない時は, bodyName と同じく無いものとして扱う.
+func bodyExtensionData(body []byte) []byte {
+	var b storagev1alpha1.RevisionBody
+	if err := proto.Unmarshal(body, &b); err != nil {
+		return nil
+	}
+	return b.GetExtensionData()
+}
+
 // withName は, body の名前を name に置き換えた body を返す. 他のフィールドは, この Lyell が知らないものも含めて残す. body が nil なら, 名前だけを持つ body を作る.
 func withName(body []byte, name string) ([]byte, error) {
 	var b storagev1alpha1.RevisionBody

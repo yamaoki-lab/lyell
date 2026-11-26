@@ -29,6 +29,13 @@ func (s *itemService) CreateItem(ctx context.Context, req *connect.Request[apiv1
 	if err != nil {
 		return nil, invalidArgument("kind", err)
 	}
+	// 作成できるのは asset のみなので, 拡張機能用のフィールドは指定されていれば拒否する.
+	if req.Msg.GetExtension() != "" {
+		return nil, invalidArgument("extension", reject(apiv1alpha1.FieldViolationReason_FIELD_VIOLATION_REASON_EXTENSION_FOR_ASSET, errors.New("asset には extension を指定できません")))
+	}
+	if len(req.Msg.GetContent().GetExtensionData()) > 0 {
+		return nil, extensionDataForAsset()
+	}
 	sha := req.Msg.GetContent().GetBlobSha256()
 	hasBlob := sha != ""
 	var sum blobstore.Sum
@@ -56,9 +63,6 @@ func (s *itemService) CreateItem(ctx context.Context, req *connect.Request[apiv1
 		item.Id, item.Head = "", ""
 		preview := contentToProto(&content)
 		preview.CreateTime = nil
-		if !hasBlob {
-			preview.BlobSha256 = ""
-		}
 		return connect.NewResponse(&apiv1alpha1.CreateItemResponse{
 			Item: item, Revision: &apiv1alpha1.Revision{Content: preview},
 		}), nil
@@ -118,6 +122,17 @@ func (s *itemService) CommitRevision(ctx context.Context, req *connect.Request[a
 	updated, err := updatedFields(req.Msg.GetUpdateMask(), req.Msg.GetContent())
 	if err != nil {
 		return nil, err
+	}
+	// API からコミットできるのは asset のみ. 他の種類の中身の扱い (extension_data の引き継ぎ等) は, まだ決めていない. 接続もトランザクションも持たずに読む.
+	item, err := s.items.Item(ctx, itemID)
+	if err != nil {
+		return nil, s.connectError(ctx, err)
+	}
+	if item.Kind != itemstore.KindAsset {
+		return nil, invalidArgument("item_id", reject(apiv1alpha1.FieldViolationReason_FIELD_VIOLATION_REASON_KIND_UNSUPPORTED, fmt.Errorf("%s の item には, まだ revision をコミットできません", item.Kind)))
+	}
+	if updated[extensionDataField] {
+		return nil, extensionDataForAsset()
 	}
 	var sum blobstore.Sum
 	inheritBlob, inheritName := !updated[blobSha256Field], !updated[nameField]
@@ -238,6 +253,11 @@ func (s *itemService) connectError(ctx context.Context, err error) error {
 	return connect.NewError(connect.CodeInternal, errors.New("内部エラー"))
 }
 
+// extensionDataForAsset は, asset の revision に extension_data が指定された時のエラーを返す.
+func extensionDataForAsset() error {
+	return invalidArgument("content.extension_data", reject(apiv1alpha1.FieldViolationReason_FIELD_VIOLATION_REASON_EXTENSION_DATA_FOR_ASSET, errors.New("asset の revision には extension_data を指定できません")))
+}
+
 // rejection は, 呼び出し側の誤りに, 拒否理由 (BadRequest の reason) を添えたエラー.
 type rejection struct {
 	reason apiv1alpha1.FieldViolationReason
@@ -332,6 +352,8 @@ func parseKind(k apiv1alpha1.ItemKind) (itemstore.Kind, error) {
 		return itemstore.KindAsset, nil
 	case apiv1alpha1.ItemKind_ITEM_KIND_COLLECTION:
 		return "", reject(apiv1alpha1.FieldViolationReason_FIELD_VIOLATION_REASON_KIND_UNSUPPORTED, errors.New("collection は, 一覧の形式が決まるまで作成できません"))
+	case apiv1alpha1.ItemKind_ITEM_KIND_EXTENSION:
+		return "", reject(apiv1alpha1.FieldViolationReason_FIELD_VIOLATION_REASON_KIND_UNSUPPORTED, errors.New("extension の item は, 拡張機能を登録できるようになるまで作成できません"))
 	case apiv1alpha1.ItemKind_ITEM_KIND_UNSPECIFIED:
 		return "", reject(apiv1alpha1.FieldViolationReason_FIELD_VIOLATION_REASON_KIND_UNSPECIFIED, errors.New("item の種類が指定されていません"))
 	}
@@ -345,8 +367,10 @@ func itemToProto(item itemstore.Item) *apiv1alpha1.Item {
 		kind = apiv1alpha1.ItemKind_ITEM_KIND_ASSET
 	case itemstore.KindCollection:
 		kind = apiv1alpha1.ItemKind_ITEM_KIND_COLLECTION
+	case itemstore.KindExtension:
+		kind = apiv1alpha1.ItemKind_ITEM_KIND_EXTENSION
 	}
-	return &apiv1alpha1.Item{Id: item.ID.String(), Kind: kind, Head: item.Head.String()}
+	return &apiv1alpha1.Item{Id: item.ID.String(), Kind: kind, Head: item.Head.String(), Extension: item.Extension}
 }
 
 func revisionToProto(rev itemstore.Revision) *apiv1alpha1.Revision {
@@ -363,12 +387,18 @@ func contentToProto(c *itemstore.Content) *apiv1alpha1.RevisionContent {
 	if c == nil {
 		return nil
 	}
+	// extension の item の revision は blob を持たず, Blob はゼロ値になる. ゼロの SHA-256 を返さず, 空にする.
+	var sha string
+	if c.Blob != (blobstore.Sum{}) {
+		sha = c.Blob.String()
+	}
 	return &apiv1alpha1.RevisionContent{
 		CreateTime:    timestamppb.New(c.CreatedAt),
 		AuthorUser:    c.AuthorUser,
 		AuthorMachine: c.AuthorMachine,
-		BlobSha256:    c.Blob.String(),
+		BlobSha256:    sha,
 		BlobSize:      c.BlobSize,
 		Name:          bodyName(c.Body),
+		ExtensionData: bodyExtensionData(c.Body),
 	}
 }

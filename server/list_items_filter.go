@@ -115,8 +115,10 @@ func addKindCondition(o *itemstore.ListOptions, value *expr.Expr) error {
 		kind = itemstore.KindAsset
 	case apiv1alpha1.ItemKind_ITEM_KIND_COLLECTION:
 		kind = itemstore.KindCollection
+	case apiv1alpha1.ItemKind_ITEM_KIND_EXTENSION:
+		kind = itemstore.KindExtension
 	default:
-		return reject(apiv1alpha1.FieldViolationReason_FIELD_VIOLATION_REASON_FILTER_VALUE_INVALID, fmt.Errorf("%s には ITEM_KIND_ASSET か ITEM_KIND_COLLECTION を指定してください", filterFieldKind))
+		return reject(apiv1alpha1.FieldViolationReason_FIELD_VIOLATION_REASON_FILTER_VALUE_INVALID, fmt.Errorf("%s には ITEM_KIND_ASSET, ITEM_KIND_COLLECTION, ITEM_KIND_EXTENSION のいずれかを指定してください", filterFieldKind))
 	}
 	if o.Kind != "" {
 		return reject(apiv1alpha1.FieldViolationReason_FIELD_VIOLATION_REASON_FILTER_FIELD_REPEATED, fmt.Errorf("%s は1回のみ指定できます", filterFieldKind))

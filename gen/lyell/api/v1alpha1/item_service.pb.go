@@ -38,7 +38,7 @@ const (
 	FieldViolationReason_FIELD_VIOLATION_REASON_KIND_UNSPECIFIED FieldViolationReason = 3
 	// FIELD_VIOLATION_REASON_KIND_UNKNOWN は, item の種類が ItemKind に存在しない値であること.
 	FieldViolationReason_FIELD_VIOLATION_REASON_KIND_UNKNOWN FieldViolationReason = 4
-	// FIELD_VIOLATION_REASON_KIND_UNSUPPORTED は, item の種類は ItemKind に存在するが, まだ作成できないこと (ITEM_KIND_COLLECTION).
+	// FIELD_VIOLATION_REASON_KIND_UNSUPPORTED は, item の種類が ItemKind に存在するが, まだ作成できないこと (ITEM_KIND_COLLECTION, ITEM_KIND_EXTENSION). CommitRevision では, item_id の item が asset ではなく, まだ revision をコミットできないこと. field は item_id.
 	FieldViolationReason_FIELD_VIOLATION_REASON_KIND_UNSUPPORTED FieldViolationReason = 5
 	// FIELD_VIOLATION_REASON_PARENTS_TOO_MANY は, parents の数が上限を超えていること.
 	FieldViolationReason_FIELD_VIOLATION_REASON_PARENTS_TOO_MANY FieldViolationReason = 6
@@ -80,7 +80,7 @@ const (
 	FieldViolationReason_FIELD_VIOLATION_REASON_FILTER_FIELD_UNSUPPORTED FieldViolationReason = 24
 	// FIELD_VIOLATION_REASON_FILTER_OPERATOR_UNSUPPORTED は, 使用できない演算子 (OR, NOT, != など) か, そのフィールドでは使えない演算子を指定していること. 比較か, 比較を AND で結合したもの以外の式も含む.
 	FieldViolationReason_FIELD_VIOLATION_REASON_FILTER_OPERATOR_UNSUPPORTED FieldViolationReason = 25
-	// FIELD_VIOLATION_REASON_FILTER_VALUE_INVALID は, 比較の値がフィールドに合わないこと. 型の合わない値, ITEM_KIND_ASSET と ITEM_KIND_COLLECTION 以外の item.kind, RFC 3339 の文字列でない時刻を含む.
+	// FIELD_VIOLATION_REASON_FILTER_VALUE_INVALID は, 比較の値がフィールドに合わないこと. 型の合わない値, ITEM_KIND_ASSET, ITEM_KIND_COLLECTION, ITEM_KIND_EXTENSION 以外の item.kind, RFC 3339 の文字列でない時刻を含む.
 	FieldViolationReason_FIELD_VIOLATION_REASON_FILTER_VALUE_INVALID FieldViolationReason = 26
 	// FIELD_VIOLATION_REASON_FILTER_FIELD_REPEATED は, item.kind を2回以上指定していること.
 	FieldViolationReason_FIELD_VIOLATION_REASON_FILTER_FIELD_REPEATED FieldViolationReason = 27
@@ -92,6 +92,10 @@ const (
 	FieldViolationReason_FIELD_VIOLATION_REASON_ORDER_BY_FIELD_UNSUPPORTED FieldViolationReason = 30
 	// FIELD_VIOLATION_REASON_ORDER_BY_TOO_MANY_FIELDS は, order_by に2つ以上のフィールドを指定していること.
 	FieldViolationReason_FIELD_VIOLATION_REASON_ORDER_BY_TOO_MANY_FIELDS FieldViolationReason = 31
+	// FIELD_VIOLATION_REASON_EXTENSION_FOR_ASSET は, asset の item に extension を指定していること. field は extension.
+	FieldViolationReason_FIELD_VIOLATION_REASON_EXTENSION_FOR_ASSET FieldViolationReason = 32
+	// FIELD_VIOLATION_REASON_EXTENSION_DATA_FOR_ASSET は, asset の item の revision に extension_data を指定していること. update_mask で指定した場合も含む. field は content.extension_data.
+	FieldViolationReason_FIELD_VIOLATION_REASON_EXTENSION_DATA_FOR_ASSET FieldViolationReason = 33
 )
 
 // Enum value maps for FieldViolationReason.
@@ -129,6 +133,8 @@ var (
 		29: "FIELD_VIOLATION_REASON_ORDER_BY_FIELD_UNKNOWN",
 		30: "FIELD_VIOLATION_REASON_ORDER_BY_FIELD_UNSUPPORTED",
 		31: "FIELD_VIOLATION_REASON_ORDER_BY_TOO_MANY_FIELDS",
+		32: "FIELD_VIOLATION_REASON_EXTENSION_FOR_ASSET",
+		33: "FIELD_VIOLATION_REASON_EXTENSION_DATA_FOR_ASSET",
 	}
 	FieldViolationReason_value = map[string]int32{
 		"FIELD_VIOLATION_REASON_UNSPECIFIED":                   0,
@@ -163,6 +169,8 @@ var (
 		"FIELD_VIOLATION_REASON_ORDER_BY_FIELD_UNKNOWN":        29,
 		"FIELD_VIOLATION_REASON_ORDER_BY_FIELD_UNSUPPORTED":    30,
 		"FIELD_VIOLATION_REASON_ORDER_BY_TOO_MANY_FIELDS":      31,
+		"FIELD_VIOLATION_REASON_EXTENSION_FOR_ASSET":           32,
+		"FIELD_VIOLATION_REASON_EXTENSION_DATA_FOR_ASSET":      33,
 	}
 )
 
@@ -201,7 +209,9 @@ type CreateItemRequest struct {
 	// content は, 最初の revision の中身. blob_sha256 は validate_only が true の場合に限り省略できる. 指定する場合は, blob を事前に保存しておく必要がある. name は省略でき, 省略すると名前のない revision になる. 出力専用のフィールドは, 設定しても無視する.
 	Content *RevisionContent `protobuf:"bytes,3,opt,name=content,proto3" json:"content,omitempty"`
 	// validate_only が true なら, リクエストを検証し, 何も保存せずにレスポンスを返す. blob_sha256 を省略した場合は blob の検証を省略する. 検証に失敗した場合は, validate_only が false の場合と同じエラーと詳細情報を返す.
-	ValidateOnly  bool `protobuf:"varint,4,opt,name=validate_only,json=validateOnly,proto3" json:"validate_only,omitempty"`
+	ValidateOnly bool `protobuf:"varint,4,opt,name=validate_only,json=validateOnly,proto3" json:"validate_only,omitempty"`
+	// extension は, 開かれた時に item の中身を用意する拡張機能の名前. ITEM_KIND_EXTENSION の item でのみ指定できる. asset に指定すると INVALID_ARGUMENT を返す.
+	Extension     string `protobuf:"bytes,5,opt,name=extension,proto3" json:"extension,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -255,6 +265,13 @@ func (x *CreateItemRequest) GetValidateOnly() bool {
 		return x.ValidateOnly
 	}
 	return false
+}
+
+func (x *CreateItemRequest) GetExtension() string {
+	if x != nil {
+		return x.Extension
+	}
+	return ""
 }
 
 // CreateItemResponse は, CreateItem のレスポンス.
@@ -482,7 +499,7 @@ func (x *ListItemsRequest) GetOrderBy() string {
 // ListItemsResponse は, ListItems のレスポンス.
 type ListItemsResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// entries は, このページの item 一覧. order_by で指定された順に並ぶ.
+	// entries は, このページの item 一覧. order_by で指定された順に並ぶ. head_revision.content.extension_data は返さない.
 	Entries []*ItemEntry `protobuf:"bytes,1,rep,name=entries,proto3" json:"entries,omitempty"`
 	// next_page_token は, 次ページを取得する際に page_token に渡す値. 空なら最後のページ.
 	NextPageToken string `protobuf:"bytes,2,opt,name=next_page_token,json=nextPageToken,proto3" json:"next_page_token,omitempty"`
@@ -924,11 +941,12 @@ var File_lyell_api_v1alpha1_item_service_proto protoreflect.FileDescriptor
 
 const file_lyell_api_v1alpha1_item_service_proto_rawDesc = "" +
 	"\n" +
-	"%lyell/api/v1alpha1/item_service.proto\x12\x12lyell.api.v1alpha1\x1a google/protobuf/field_mask.proto\x1a\x1dlyell/api/v1alpha1/item.proto\"\xbc\x01\n" +
+	"%lyell/api/v1alpha1/item_service.proto\x12\x12lyell.api.v1alpha1\x1a google/protobuf/field_mask.proto\x1a\x1dlyell/api/v1alpha1/item.proto\"\xda\x01\n" +
 	"\x11CreateItemRequest\x120\n" +
 	"\x04kind\x18\x01 \x01(\x0e2\x1c.lyell.api.v1alpha1.ItemKindR\x04kind\x12=\n" +
 	"\acontent\x18\x03 \x01(\v2#.lyell.api.v1alpha1.RevisionContentR\acontent\x12#\n" +
-	"\rvalidate_only\x18\x04 \x01(\bR\fvalidateOnlyJ\x04\b\x02\x10\x03R\vblob_sha256\"|\n" +
+	"\rvalidate_only\x18\x04 \x01(\bR\fvalidateOnly\x12\x1c\n" +
+	"\textension\x18\x05 \x01(\tR\textensionJ\x04\b\x02\x10\x03R\vblob_sha256\"|\n" +
 	"\x12CreateItemResponse\x12,\n" +
 	"\x04item\x18\x01 \x01(\v2\x18.lyell.api.v1alpha1.ItemR\x04item\x128\n" +
 	"\brevision\x18\x02 \x01(\v2\x1c.lyell.api.v1alpha1.RevisionR\brevision\" \n" +
@@ -967,7 +985,7 @@ const file_lyell_api_v1alpha1_item_service_proto_rawDesc = "" +
 	"\tHeadMoved\x12!\n" +
 	"\fcurrent_head\x18\x01 \x01(\tR\vcurrentHead\"$\n" +
 	"\x0eNameSuggestion\x12\x12\n" +
-	"\x04name\x18\x01 \x01(\tR\x04name*\x8d\f\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name*\xf2\f\n" +
 	"\x14FieldViolationReason\x12&\n" +
 	"\"FIELD_VIOLATION_REASON_UNSPECIFIED\x10\x00\x12'\n" +
 	"#FIELD_VIOLATION_REASON_ID_MALFORMED\x10\x01\x120\n" +
@@ -1001,7 +1019,9 @@ const file_lyell_api_v1alpha1_item_service_proto_rawDesc = "" +
 	"&FIELD_VIOLATION_REASON_ORDER_BY_SYNTAX\x10\x1c\x121\n" +
 	"-FIELD_VIOLATION_REASON_ORDER_BY_FIELD_UNKNOWN\x10\x1d\x125\n" +
 	"1FIELD_VIOLATION_REASON_ORDER_BY_FIELD_UNSUPPORTED\x10\x1e\x123\n" +
-	"/FIELD_VIOLATION_REASON_ORDER_BY_TOO_MANY_FIELDS\x10\x1f2\xf0\x03\n" +
+	"/FIELD_VIOLATION_REASON_ORDER_BY_TOO_MANY_FIELDS\x10\x1f\x12.\n" +
+	"*FIELD_VIOLATION_REASON_EXTENSION_FOR_ASSET\x10 \x123\n" +
+	"/FIELD_VIOLATION_REASON_EXTENSION_DATA_FOR_ASSET\x10!2\xf0\x03\n" +
 	"\vItemService\x12[\n" +
 	"\n" +
 	"CreateItem\x12%.lyell.api.v1alpha1.CreateItemRequest\x1a&.lyell.api.v1alpha1.CreateItemResponse\x12W\n" +
