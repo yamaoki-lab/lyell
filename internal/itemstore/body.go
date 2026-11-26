@@ -1,6 +1,7 @@
 package itemstore
 
 import (
+	"bytes"
 	"fmt"
 	"time"
 
@@ -60,4 +61,25 @@ func columnsFromBody(body []byte) (bodyColumns, error) {
 		blob:          b.GetBlobSha256(),
 		blobSize:      b.GetBlobSize(),
 	}, nil
+}
+
+// sameBodyContent は, 2つの body が, 記録時に itemstore が書き込むフィールド (記録時刻, 作成者, blob) を除いて同じかを返す. 変更のない revision を拒否する時に, 記録ごとに変わるフィールドを比べないため. blob は呼び出し側で比べる. この Lyell が知らないフィールドも比べる.
+func sameBodyContent(a, b []byte) (bool, error) {
+	strip := func(body []byte) ([]byte, error) {
+		var m storagev1alpha1.RevisionBody
+		if err := proto.Unmarshal(body, &m); err != nil {
+			return nil, fmt.Errorf("%w: Body を RevisionBody として読めません: %v", ErrInvalid, err)
+		}
+		m.CreateTime, m.AuthorUser, m.AuthorMachine, m.BlobSha256, m.BlobSize = nil, "", "", nil, 0
+		return proto.MarshalOptions{Deterministic: true}.Marshal(&m)
+	}
+	sa, err := strip(a)
+	if err != nil {
+		return false, err
+	}
+	sb, err := strip(b)
+	if err != nil {
+		return false, err
+	}
+	return bytes.Equal(sa, sb), nil
 }

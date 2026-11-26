@@ -43,6 +43,10 @@ type NewRevision struct {
 	Data io.Reader
 	// PutOptions は, blob を書き込む時のオプション (保存先の指定等).
 	PutOptions []blobstore.PutOption
+	// Links は, 新しい revision からの親以外のリンク. From のリンクは引き継がないので, 残すリンクも全て指定する. この版の Lyell が知らない型のリンクは, LinkTypes にその定義がある時だけ書ける.
+	Links []Link
+	// LinkTypes は, Links で使う型の定義 (別のマシンから受け取った時等). 登録し, 同じ名前と major 番号の定義があれば, 新しい時だけ置き換える. フラグが登録済みの定義と食い違えば拒否する.
+	LinkTypes []LinkTypeDefinition
 }
 
 // CommitRevision は, item に revision を追加し, item の head をその revision へ進める. 追加した revision の ID を返す.
@@ -50,6 +54,8 @@ type NewRevision struct {
 // 早送りだけを受け付ける. 新しい revision は From (現在の head) の子孫でなければならない. head が From から動いていたら, 何も記録せずに *NotFastForwardError (ErrNotFastForward) を返す. 読み取ってから書き込むまでの間に他の書き込みが head を進めても, 一方だけが成功する.
 //
 // 引数が不正なら ErrInvalid を, item や親の revision が存在しなければ ErrNotFound を返す. 親の指定が不正な場合のエラーは *ParentsError 型で, errors.As で取り出せる.
+//
+// 統合でなく, From が間引かれていない時, blob, body (記録時刻, 作成者, blob のフィールドを除く), 親以外のリンクが From と全て同じなら, 何も記録せずに ErrUnchanged を返す. リンクだけを変えた revision は記録する.
 //
 // 中身のバイト列 (blob) は, CreateItem と同じく, 先に書き込んでから記録する. 拒否した時や記録に失敗した時は, 書き込んだ blob が孤立して残る. どこからも参照されない blob は無害で, 後の GC で回収できる.
 func (s *Store) CommitRevision(ctx context.Context, r NewRevision) (ID, error) {
@@ -72,13 +78,22 @@ func (s *Store) CommitRevision(ctx context.Context, r NewRevision) (ID, error) {
 	if _, err := validateRevisionTarget(ctx, tx, r); err != nil {
 		return ID{}, err
 	}
+	if err := registerLinkTypes(ctx, tx, r.LinkTypes, true); err != nil {
+		return ID{}, err
+	}
+	if err := checkChanged(ctx, tx, r, r.Links); err != nil {
+		return ID{}, err
+	}
 	if err := insertRevision(ctx, tx, revID, r.ItemID, r.Content); err != nil {
 		return ID{}, err
 	}
 	for _, p := range r.Parents {
-		if _, err := tx.ExecContext(ctx, "INSERT INTO revision_links (source_revision, target_revision, type_name, type_major) VALUES (?, ?, ?, ?)", revID[:], p[:], linkTypeParent, linkTypeParentMajor); err != nil {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO revision_links (source_revision, target_revision, type_name, type_major) VALUES (?, ?, ?, ?)", revID[:], p[:], LinkParent.Name, LinkParent.Major); err != nil {
 			return ID{}, fmt.Errorf("親 %s を記録できませんでした: %w", p, err)
 		}
+	}
+	if err := insertLinks(ctx, tx, revID, r.Links); err != nil {
+		return ID{}, err
 	}
 
 	// 検証から更新まで同じトランザクション内で書き込みロックを保持するため, 他の書き込みがその間に head を進めることはない.
@@ -92,7 +107,7 @@ func (s *Store) CommitRevision(ctx context.Context, r NewRevision) (ID, error) {
 	return revID, nil
 }
 
-// ValidateCommitRevision は, CommitRevision の入力を読み取りトランザクションで検証し, 保存される revision の中身と親を返す. blob は保存済みである必要があり, Data と PutOptions は使用しない.
+// ValidateCommitRevision は, CommitRevision の入力を読み取りトランザクションで検証し, 保存される revision の中身, 親, 親以外のリンクを返す. 型の定義は登録しない. blob は保存済みである必要があり, Data と PutOptions は使用しない.
 func (s *Store) ValidateCommitRevision(ctx context.Context, r NewRevision) (Revision, error) {
 	// prepareRevision は読み取り用接続を自分で取るので, トランザクションを始める前に呼ぶ. 接続を1本持ったまま呼ぶと, 同時に呼ばれた数が読み取り用接続の数に達した時に全てが止まる. 種類は変わらず item も消えないので, 先に読んでも結果は同じ.
 	r.Data = nil
@@ -111,12 +126,18 @@ func (s *Store) ValidateCommitRevision(ctx context.Context, r NewRevision) (Revi
 	if err != nil {
 		return Revision{}, err
 	}
+	if err := registerLinkTypes(ctx, tx, r.LinkTypes, false); err != nil {
+		return Revision{}, err
+	}
+	if err := checkChanged(ctx, tx, r, r.Links); err != nil {
+		return Revision{}, err
+	}
 	// Revision と同じく, 同じ item の親を先に, その中は ID 順に返す. 親は全て存在することを検証済み.
 	parents := parentOrder(r.ItemID, r.Parents, func(p ID) (ID, bool) {
 		item, ok := parentItems[p]
 		return item, ok
 	})
-	return Revision{ItemID: r.ItemID, Parents: parents, Content: &r.Content}, nil
+	return Revision{ItemID: r.ItemID, Parents: parents, Links: r.Links, Content: &r.Content}, nil
 }
 
 func (s *Store) prepareRevision(ctx context.Context, r NewRevision) (NewRevision, error) {
@@ -129,6 +150,11 @@ func (s *Store) prepareRevision(ctx context.Context, r NewRevision) (NewRevision
 	if err := validateParents(r.From, r.Parents); err != nil {
 		return NewRevision{}, err
 	}
+	links, err := validateLinks(r.Links, r.LinkTypes)
+	if err != nil {
+		return NewRevision{}, err
+	}
+	r.Links = links
 	// 種類は作成後に変わらないので, 記録するトランザクションの外で読んでよい. blob を書き込む前に, 種類に合わない中身を弾く.
 	item, err := s.Item(ctx, r.ItemID)
 	if err != nil {
