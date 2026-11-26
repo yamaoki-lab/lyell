@@ -1,8 +1,11 @@
 package itemstore
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -129,21 +132,85 @@ func TestCommitRevision_OnlyOneOfConcurrentWritersWins(t *testing.T) {
 	}
 }
 
+// TestCommitRevision_MergeMayHaveParentInAnotherItem は, 統合の revision が別の item の revision を親に持てること, および親を同じ item の親から先に返すことを確かめる. 親の順序は ID の大小に依らないので, 別の item の親の ID が小さい場合と大きい場合の両方で確かめる.
 func TestCommitRevision_MergeMayHaveParentInAnotherItem(t *testing.T) {
-	s, _ := openTestStore(t)
-	ctx := context.Background()
-	a, err := s.CreateItem(ctx, newTestItem("a"))
-	if err != nil {
-		t.Fatalf("CreateItem(a) error = %v, want nil", err)
-	}
-	b, err := s.CreateItem(ctx, newTestItem("b"))
-	if err != nil {
-		t.Fatalf("CreateItem(b) error = %v, want nil", err)
-	}
+	for _, otherFirst := range []bool{true, false} {
+		t.Run(fmt.Sprintf("別の item を先に作る=%v", otherFirst), func(t *testing.T) {
+			s, _ := openTestStore(t)
+			ctx := context.Background()
+			// ID は作った順に大きくなるので, 作る順で別の item の親の ID の大小を決める.
+			var a, b Item
+			var from ID
+			create := func(data string) Item {
+				item, err := s.CreateItem(ctx, newTestItem(data))
+				if err != nil {
+					t.Fatalf("CreateItem(%s) error = %v, want nil", data, err)
+				}
+				return item
+			}
+			commitB := func() {
+				var err error
+				if from, err = s.CommitRevision(ctx, NewRevision{ItemID: b.ID, From: b.Head, Content: testContent("b2"), Data: strings.NewReader("b2")}); err != nil {
+					t.Fatalf("CommitRevision(b2) error = %v, want nil", err)
+				}
+			}
+			if otherFirst {
+				a, b = create("a"), create("b")
+				commitB()
+			} else {
+				b = create("b")
+				commitB()
+				a = create("a")
+			}
+			if (bytes.Compare(a.Head[:], from[:]) < 0) != otherFirst {
+				t.Fatalf("別の item の親 %s と %s の大小が想定と違う", a.Head, from)
+			}
+			want := []ID{from, a.Head}
 
-	// b に a を統合する: 新しい revision は, b の head と a の head の両方を親に持つ.
-	if _, err := s.CommitRevision(ctx, NewRevision{ItemID: b.ID, From: b.Head, Parents: []ID{b.Head, a.Head}, Content: testContent("merged"), Data: strings.NewReader("merged")}); err != nil {
-		t.Errorf("統合の CommitRevision() error = %v, want nil", err)
+			// b に a を統合する: 新しい revision は, b の head と a の head の両方を親に持つ. 渡す順序に依らず, 同じ item の親が先になる.
+			// 検証だけの時は blob が保存済みである必要があるので, 保存済みの b2 の中身で確かめる.
+			input := NewRevision{ItemID: b.ID, From: from, Parents: []ID{a.Head, from}, Content: testContent("b2")}
+			preview, err := s.ValidateCommitRevision(ctx, input)
+			if err != nil {
+				t.Fatalf("統合の ValidateCommitRevision() error = %v, want nil", err)
+			}
+			if !reflect.DeepEqual(preview.Parents, want) {
+				t.Errorf("ValidateCommitRevision().Parents = %v, want %v", preview.Parents, want)
+			}
+			input.Content, input.Data = testContent("merged"), strings.NewReader("merged")
+			merged, err := s.CommitRevision(ctx, input)
+			if err != nil {
+				t.Fatalf("統合の CommitRevision() error = %v, want nil", err)
+			}
+			rev, err := s.Revision(ctx, merged)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(rev.Parents, want) {
+				t.Errorf("Revision().Parents = %v, want %v", rev.Parents, want)
+			}
+			list, err := s.ListItems(ctx, ListOptions{Limit: 10})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, e := range list.Entries {
+				if e.Item.ID == b.ID && !reflect.DeepEqual(e.Head.Parents, want) {
+					t.Errorf("ListItems() の head の親 = %v, want %v", e.Head.Parents, want)
+				}
+			}
+
+			// このマシンに無い親は, item が分からないので後ろに置く. 同じ item の親の ID より小さくても後ろになる.
+			if _, err := s.write.Exec("INSERT INTO revision_links (source_revision, target_revision, type_name, type_major) VALUES (?, ?, 'parent', 1)", merged[:], testID(1)); err != nil {
+				t.Fatal(err)
+			}
+			rev, err = s.Revision(ctx, merged)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := append(want, ID(testID(1))); !reflect.DeepEqual(rev.Parents, want) {
+				t.Errorf("無い親を足した Revision().Parents = %v, want %v", rev.Parents, want)
+			}
+		})
 	}
 }
 

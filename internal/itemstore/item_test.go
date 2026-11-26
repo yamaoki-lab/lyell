@@ -189,7 +189,7 @@ func TestRevision_ParentsSurviveThinning(t *testing.T) {
 			if err := insertRevision(ctx, tx, r.id, item.ID, testContent("r")); err != nil {
 				return err
 			}
-			if _, err := tx.Exec("INSERT INTO revision_parents VALUES (?, ?)", r.id[:], r.parent[:]); err != nil {
+			if _, err := tx.Exec("INSERT INTO revision_links (source_revision, target_revision, type_name, type_major) VALUES (?, ?, 'parent', 1)", r.id[:], r.parent[:]); err != nil {
 				return err
 			}
 		}
