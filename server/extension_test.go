@@ -3,6 +3,8 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,6 +14,7 @@ import (
 
 	apiv1alpha1 "github.com/yamaoki-lab/lyell/gen/lyell/api/v1alpha1"
 	storagev1alpha1 "github.com/yamaoki-lab/lyell/gen/lyell/storage/v1alpha1"
+	"github.com/yamaoki-lab/lyell/internal/blobstore"
 	"github.com/yamaoki-lab/lyell/internal/itemstore"
 )
 
@@ -131,23 +134,39 @@ func TestCommitRevision_RejectsExtensionDataForAsset(t *testing.T) {
 	wantViolation(t, "CommitRevision(blob を空に)", err, "content.blob_sha256", "BLOB_SHA256_REQUIRED")
 }
 
-func TestCommitRevision_RejectsExtensionItem(t *testing.T) {
+// TestCommitRevision_RejectsNonAssetItem は, asset 以外の item へのコミットを拒否することを確かめる. collection の item は API から作れないので, itemstore を直接呼んで作る.
+func TestCommitRevision_RejectsNonAssetItem(t *testing.T) {
 	s, c := newTestServer(t)
-	ext := createExtensionItem(t, s, "lyell.clock", []byte{1, 2, 3})
-	// extension_data を変えずに名前だけを変更しても拒否する.
-	for _, content := range []*apiv1alpha1.RevisionContent{{ExtensionData: []byte{9}}, {Name: "x"}} {
-		for _, validateOnly := range []bool{false, true} {
-			_, err := c.CommitRevision(context.Background(), connect.NewRequest(&apiv1alpha1.CommitRevisionRequest{
-				ItemId: ext.ID.String(), ExpectedHead: ext.Head.String(), Content: content, ValidateOnly: validateOnly,
-			}))
-			wantViolation(t, "CommitRevision(extension の item)", err, "item_id", "KIND_UNSUPPORTED")
-		}
-	}
-	got, err := s.items.Item(context.Background(), ext.ID)
+	ctx := context.Background()
+	collection, err := s.items.CreateItem(ctx, itemstore.NewItem{
+		Kind: itemstore.KindCollection,
+		Content: itemstore.Content{
+			CreatedAt: time.Now(), AuthorUser: "u", AuthorMachine: "m",
+			Blob: blobstore.Sum(sha256.Sum256([]byte("c"))),
+		},
+		Data: strings.NewReader("c"),
+	})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("itemstore.CreateItem(collection) error = %v, want nil", err)
 	}
-	if got.Head != ext.Head {
-		t.Errorf("拒否した後の head = %s, want %s", got.Head, ext.Head)
+	for _, item := range []itemstore.Item{createExtensionItem(t, s, "lyell.clock", []byte{1, 2, 3}), collection} {
+		t.Run(string(item.Kind), func(t *testing.T) {
+			// extension_data を変えずに名前だけを変更しても拒否する.
+			for _, content := range []*apiv1alpha1.RevisionContent{{ExtensionData: []byte{9}}, {Name: "x"}} {
+				for _, validateOnly := range []bool{false, true} {
+					_, err := c.CommitRevision(ctx, connect.NewRequest(&apiv1alpha1.CommitRevisionRequest{
+						ItemId: item.ID.String(), ExpectedHead: item.Head.String(), Content: content, ValidateOnly: validateOnly,
+					}))
+					wantViolation(t, "CommitRevision("+string(item.Kind)+" の item)", err, "item_id", "KIND_UNSUPPORTED")
+				}
+			}
+			got, err := s.items.Item(ctx, item.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Head != item.Head {
+				t.Errorf("拒否後の head = %s, want %s", got.Head, item.Head)
+			}
+		})
 	}
 }
