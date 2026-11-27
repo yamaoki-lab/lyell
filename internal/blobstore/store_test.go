@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -14,11 +15,11 @@ import (
 // countingBackend は, Backend.Put が呼ばれた回数を数える.
 type countingBackend struct {
 	Backend
-	puts int
+	puts atomic.Int32
 }
 
-func (b *countingBackend) Put(ctx context.Context, sum Sum, data io.Reader, opts ...PutOption) error {
-	b.puts++
+func (b *countingBackend) Put(ctx context.Context, sum Sum, data io.Reader, opts ...PutOption) (bool, error) {
+	b.puts.Add(1)
 	return b.Backend.Put(ctx, sum, data, opts...)
 }
 
@@ -106,8 +107,8 @@ func TestStore_PutExistingVerifiesWithoutWriting(t *testing.T) {
 	if created, err := store.Put(ctx, sumOf("hello"), strings.NewReader("hello")); err != nil || created {
 		t.Fatalf("2回目の Put() = %v, %v, want false, nil", created, err)
 	}
-	if backend.puts != 1 {
-		t.Errorf("Backend.Put の回数 = %d, want 1", backend.puts)
+	if backend.puts.Load() != 1 {
+		t.Errorf("Backend.Put の回数 = %d, want 1", backend.puts.Load())
 	}
 
 	// 既に存在しても, 一致しない中身は拒否する.
@@ -139,7 +140,7 @@ type blockingBackend struct {
 	release chan struct{}
 }
 
-func (b *blockingBackend) Put(ctx context.Context, sum Sum, data io.Reader, opts ...PutOption) error {
+func (b *blockingBackend) Put(ctx context.Context, sum Sum, data io.Reader, opts ...PutOption) (bool, error) {
 	if sum == b.block {
 		close(b.entered)
 		<-b.release
@@ -156,50 +157,96 @@ func newBlockingBackend(t *testing.T, block Sum) *blockingBackend {
 	}
 }
 
-// waitForWaiters は, sum のロックを待機している数 (保持している1つを含む) が n になるまで待つ.
-func waitForWaiters(t *testing.T, store *Store, sum Sum, n int) {
-	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		store.locks.mu.Lock()
-		e := store.locks.entries[sum]
-		refs := 0
-		if e != nil {
-			refs = e.refs
-		}
-		store.locks.mu.Unlock()
-		if refs == n {
-			return
-		}
-		time.Sleep(time.Millisecond)
-	}
-	t.Fatalf("%s のロックの待機数が %d にならなかった", sum, n)
+// gatedReader は, 中身を全て返した後, io.EOF を返す前に arrived へ知らせ, gate が閉じられるまで停止する. 転送が止まった接続や, 確定の直前で揃えた Put を再現する.
+type gatedReader struct {
+	data    []byte
+	arrived chan<- struct{}
+	gate    <-chan struct{}
+	waited  bool
 }
 
-func TestStore_ConcurrentPutsOfSameSumWriteOnce(t *testing.T) {
-	backend := newBlockingBackend(t, sumOf("hello"))
-	store := New(backend)
+func (r *gatedReader) Read(p []byte) (int, error) {
+	if len(r.data) > 0 {
+		n := copy(p, r.data)
+		r.data = r.data[n:]
+		return n, nil
+	}
+	if !r.waited {
+		r.waited = true
+		r.arrived <- struct{}{}
+		<-r.gate
+	}
+	return 0, io.EOF
+}
+
+type putResult struct {
+	created bool
+	err     error
+}
+
+func TestStore_StalledPutDoesNotBlockPutOfSameSum(t *testing.T) {
+	store := New(NewLocalStore(t.TempDir()))
 	ctx := context.Background()
 
-	type result struct {
-		created bool
-		err     error
-	}
-	results := make(chan result, 2)
-	put := func() {
-		created, err := store.Put(ctx, sumOf("hello"), strings.NewReader("hello"))
-		results <- result{created, err}
-	}
-	go put()
-	<-backend.entered
-	go put()
-	// 2つ目の Put が, 1つ目の書き込みの途中で待機している状態を作る.
-	waitForWaiters(t, store, sumOf("hello"), 2)
-	close(backend.release)
+	arrived := make(chan struct{}, 1)
+	gate := make(chan struct{})
+	stalled := make(chan putResult, 1)
+	go func() {
+		created, err := store.Put(ctx, sumOf("hello"), &gatedReader{data: []byte("hello"), arrived: arrived, gate: gate})
+		stalled <- putResult{created, err}
+	}()
+	<-arrived
 
+	// 先の Put の転送が止まっている間に, 送り直しの Put が完了する.
+	done := make(chan putResult, 1)
+	go func() {
+		created, err := store.Put(ctx, sumOf("hello"), strings.NewReader("hello"))
+		done <- putResult{created, err}
+	}()
+	select {
+	case r := <-done:
+		if r.err != nil || !r.created {
+			t.Errorf("送り直しの Put() = %v, %v, want true, nil", r.created, r.err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("送り直しの Put が, 止まった Put を待っている")
+	}
+
+	// 止まっていた Put は, 後から確定しようとして既にあると分かるので, 新規に作成したとは返さない.
+	close(gate)
+	if r := <-stalled; r.err != nil || r.created {
+		t.Errorf("止まっていた Put() = %v, %v, want false, nil", r.created, r.err)
+	}
+}
+
+// putTogether は, stores のそれぞれで同じ中身を Put し, 全ての Put が確定の直前に揃ってから同時に確定させる.
+func putTogether(t *testing.T, stores []*Store, content string) []putResult {
+	t.Helper()
+	ctx := context.Background()
+	arrived := make(chan struct{}, len(stores))
+	gate := make(chan struct{})
+	results := make(chan putResult, len(stores))
+	for _, store := range stores {
+		go func() {
+			created, err := store.Put(ctx, sumOf(content), &gatedReader{data: []byte(content), arrived: arrived, gate: gate})
+			results <- putResult{created, err}
+		}()
+	}
+	for range stores {
+		<-arrived
+	}
+	close(gate)
+	var out []putResult
+	for range stores {
+		out = append(out, <-results)
+	}
+	return out
+}
+
+func checkCreatedOnce(t *testing.T, results []putResult) {
+	t.Helper()
 	created := 0
-	for range 2 {
-		r := <-results
+	for _, r := range results {
 		if r.err != nil {
 			t.Errorf("Put() error = %v, want nil", r.err)
 		}
@@ -207,15 +254,43 @@ func TestStore_ConcurrentPutsOfSameSumWriteOnce(t *testing.T) {
 			created++
 		}
 	}
-	if backend.puts != 1 {
-		t.Errorf("Backend.Put の回数 = %d, want 1", backend.puts)
-	}
-	// 存在の確認をロックの中で行うので, 新規に作成したと返すのは1つだけになる.
 	if created != 1 {
 		t.Errorf("created が true の Put の数 = %d, want 1", created)
 	}
-	if n := len(store.locks.entries); n != 0 {
-		t.Errorf("終了後のロックの待機数 = %d, want 0", n)
+}
+
+func TestStore_ConcurrentPutsOfSameSumCreateOnce(t *testing.T) {
+	store := New(NewLocalStore(t.TempDir()))
+	checkCreatedOnce(t, putTogether(t, []*Store{store, store, store}, "hello"))
+}
+
+// 同じ保存先を別のプロセスが使う場合を, 保存先を共有する別の Store で再現する.
+func TestStore_PutsOfSameSumSharingRootCreateOnce(t *testing.T) {
+	root := t.TempDir()
+	stores := []*Store{New(NewLocalStore(root)), New(NewLocalStore(root)), New(NewLocalStore(root))}
+	checkCreatedOnce(t, putTogether(t, stores, "hello"))
+
+	local := NewLocalStore(root)
+	r, err := local.Open(context.Background(), sumOf("hello"))
+	if err != nil {
+		t.Fatalf("Open() error = %v, want nil", err)
+	}
+	defer func() { _ = r.Close() }()
+	if got, err := io.ReadAll(r); err != nil || string(got) != "hello" {
+		t.Errorf("中身 = %q, %v, want %q, nil", got, err, "hello")
+	}
+	checkNoTemp(t, root)
+}
+
+// checkNoTemp は, root/.tmp の下に一時ファイルが残っていないことを確認する.
+func checkNoTemp(t *testing.T, root string) {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Join(root, ".tmp"))
+	if err != nil {
+		t.Fatalf("ReadDir(.tmp) error = %v, want nil", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf(".tmp の下に%d件のファイルが残っている, want 0", len(entries))
 	}
 }
 
@@ -239,24 +314,5 @@ func TestStore_PutsOfDifferentSumsDoNotWait(t *testing.T) {
 	close(backend.release)
 	if err := <-errs; err != nil {
 		t.Errorf("Put(hello) error = %v, want nil", err)
-	}
-}
-
-func TestSumLocks_WaitingCanBeCanceled(t *testing.T) {
-	var locks sumLocks
-	unlock, err := locks.lock(context.Background(), sumOf("hello"))
-	if err != nil {
-		t.Fatalf("lock() error = %v, want nil", err)
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if _, err := locks.lock(ctx, sumOf("hello")); !errors.Is(err, context.Canceled) {
-		t.Errorf("キャンセルした ctx での lock() error = %v, want context.Canceled", err)
-	}
-
-	unlock()
-	if n := len(locks.entries); n != 0 {
-		t.Errorf("終了後のロックの待機数 = %d, want 0", n)
 	}
 }

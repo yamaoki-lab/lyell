@@ -15,10 +15,12 @@ import (
 
 // Backend は, 保存先の実装が満たすインタフェース. 呼び出し側は直接呼ばずに, New でラップした Store を使用する.
 type Backend interface {
-	// Put は, sum の blob を書き込む. data を最後 (io.EOF) まで読んでから確定し, 読み取りがエラーになった場合は確定しない. 途中でクラッシュしても, 不完全な内容が見えることは無い. Store は, 中身が sum と一致しない時に data の読み取りをエラーにするので, この条件を満たせば一致しない blob は保存されない.
+	// Put は, sum の blob を書き込み, この呼び出しで blob を新規に置いたかを返す. data を最後 (io.EOF) まで読んでから確定し, 読み取りがエラーになった場合は確定しない. 途中でクラッシュしても, 不完全な内容が見えることは無い. Store は, 中身が sum と一致しない時に data の読み取りをエラーにするので, この条件を満たせば一致しない blob は保存されない.
+	//
+	// Store は同じ sum への Put を待たせずに呼ぶので, 同じ sum への Put が同時に来ることがある. 確定する時に sum の blob が既にあれば, 置き換えずに false と nil を返す. 同じ sum への Put がほぼ同時に来ても, true を返すのは1つだけにする. 保存先を共有する別のプロセスからの Put に対しても, できる限りこれを保つ (できない場合は, 実装のコメントに書く).
 	//
 	// opts は, Store が先に CheckPutOptions で検証してから渡す.
-	Put(ctx context.Context, sum Sum, data io.Reader, opts ...PutOption) error
+	Put(ctx context.Context, sum Sum, data io.Reader, opts ...PutOption) (created bool, err error)
 	// CheckPutOptions は, 書き込まずにオプションだけを検証する. サポートしないオプションがあれば *UnsupportedOptionError を返す. 未知の種類は, 必須 (Required が true) なら拒否し, 任意なら無視する.
 	CheckPutOptions(opts ...PutOption) error
 	// Open は, sum の blob を読み取る ReadCloser を返す.
@@ -30,7 +32,6 @@ type Backend interface {
 // Store は, Backend をラップし, 書き込む中身が名前の SHA-256 と一致するかを検証する.
 type Store struct {
 	backend Backend
-	locks   sumLocks
 }
 
 // New は, backend をラップした Store を返す.
@@ -52,34 +53,23 @@ func (e *MismatchError) Error() string {
 //
 // sum の blob が既に存在する時も, 呼び出し側の計算を信頼せずに data を最後まで読んで検証する. 検証せずに成功を返すと, 名前と異なる中身が保存されていないのに, 保存できたと誤認されるため. この時はディスクに書き込まず, false を返す. 転送そのものを省略したい時は, 先に Exists で確認する.
 //
-// 同じ sum への Put は, 同時には書き込まない. 後から来た Put は先の Put の完了を待ち, その後は既に存在する時と同じく検証だけを行う. 異なる sum への Put は互いに待たない. 存在の確認をロックの中で行うので, 同じ sum への Put がほぼ同時に来ても, true を返すのは1つだけになる. 呼び出し側が Exists で確認してから Put すると, 確認がロックの外になり, この保証が無くなる.
+// 同じ sum への Put も, 互いに待たない. 先の Put の転送が止まっても, 後から来た Put はそれを待たずに書き込める. どちらも書き込んだ場合は, Backend が確定する時に既にあるかを判定し, 後から確定した方は置き換えずに false を返す. そのため, 同じ sum への Put がほぼ同時に来ても, true を返すのは1つだけになる (保存先を共有する別のプロセスとの間でどこまで保つかは, Backend の実装による). 呼び出し側が Exists で確認してから Put しても, この保証は変わらない.
 //
 // opts は, data を読む前に CheckPutOptions で検証する. サポートしないオプションがあれば, 何も読まず何も保存せずに *UnsupportedOptionError を返す. 既に存在する blob は保存し直さないので, その時 opts は使用しない (既に存在する blob の保存先を変更するのは, 別の操作として扱う).
 func (s *Store) Put(ctx context.Context, sum Sum, data io.Reader, opts ...PutOption) (created bool, err error) {
 	if err := s.backend.CheckPutOptions(opts...); err != nil {
 		return false, err
 	}
-	unlock, err := s.locks.lock(ctx, sum)
-	if err != nil {
-		return false, err
-	}
 	ok, err := s.Exists(ctx, sum)
 	if err != nil {
-		unlock()
 		return false, err
 	}
 	v := &verifyingReader{r: data, h: sha256.New(), want: sum}
 	if ok {
-		// 書き込まないので, 検証の間は他の Put を待たせない.
-		unlock()
 		_, err := io.Copy(io.Discard, v)
 		return false, err
 	}
-	defer unlock()
-	if err := s.backend.Put(ctx, sum, v, opts...); err != nil {
-		return false, err
-	}
-	return true, nil
+	return s.backend.Put(ctx, sum, v, opts...)
 }
 
 // CheckPutOptions は, 書き込まずにオプションだけを検証する. 設定を読み込んだ時や画面から値を受け取った時に呼べば, 最初の書き込みより前に誤りを検出できる.

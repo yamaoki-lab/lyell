@@ -20,7 +20,7 @@ func TestLocalStore_PutThenOpenRoundTrips(t *testing.T) {
 	store := NewLocalStore(t.TempDir())
 	ctx := context.Background()
 
-	if err := store.Put(ctx, sumOf("hello"), strings.NewReader("hello")); err != nil {
+	if _, err := store.Put(ctx, sumOf("hello"), strings.NewReader("hello")); err != nil {
 		t.Fatalf("Put() error = %v, want nil", err)
 	}
 
@@ -48,7 +48,7 @@ func TestLocalStore_SizeReflectsPut(t *testing.T) {
 		t.Fatalf("Put の前の Size() error = %v, want fs.ErrNotExist", err)
 	}
 
-	if err := store.Put(ctx, sumOf("hello"), strings.NewReader("hello")); err != nil {
+	if _, err := store.Put(ctx, sumOf("hello"), strings.NewReader("hello")); err != nil {
 		t.Fatalf("Put() error = %v, want nil", err)
 	}
 
@@ -72,7 +72,7 @@ func TestLocalStore_PutPlacesBlobUnderSHA256Dir(t *testing.T) {
 	root := t.TempDir()
 	store := NewLocalStore(root)
 
-	if err := store.Put(context.Background(), sumOf("hello"), strings.NewReader("hello")); err != nil {
+	if _, err := store.Put(context.Background(), sumOf("hello"), strings.NewReader("hello")); err != nil {
 		t.Fatalf("Put() error = %v, want nil", err)
 	}
 
@@ -87,7 +87,7 @@ func TestLocalStore_PutPlacesBlobReadOnly(t *testing.T) {
 	store := NewLocalStore(t.TempDir())
 	sum := sumOf("hello")
 
-	if err := store.Put(context.Background(), sum, strings.NewReader("hello")); err != nil {
+	if _, err := store.Put(context.Background(), sum, strings.NewReader("hello")); err != nil {
 		t.Fatalf("Put() error = %v, want nil", err)
 	}
 
@@ -121,7 +121,7 @@ func TestLocalStore_Put_FailureLeavesNoPartialFileAtFinalPath(t *testing.T) {
 	ctx := context.Background()
 
 	sum := sumOf("partial")
-	err := store.Put(ctx, sum, &failingReader{remaining: []byte("partial")})
+	_, err := store.Put(ctx, sum, &failingReader{remaining: []byte("partial")})
 	if err == nil {
 		t.Fatalf("Put() error = nil, want error")
 	}
@@ -138,6 +138,25 @@ func TestLocalStore_Put_FailureLeavesNoPartialFileAtFinalPath(t *testing.T) {
 	if len(entries) != 0 {
 		t.Errorf(".tmp の下に%d件のファイルが残っている, want 0", len(entries))
 	}
+}
+
+func TestLocalStore_PutExistingKeepsBlobAndReturnsFalse(t *testing.T) {
+	root := t.TempDir()
+	store := NewLocalStore(root)
+	ctx := context.Background()
+
+	if created, err := store.Put(ctx, sumOf("hello"), strings.NewReader("hello")); err != nil || !created {
+		t.Fatalf("Put() = %v, %v, want true, nil", created, err)
+	}
+	// Store を介さないので中身は検証されないが, 既にある blob を置き換えないことを, 異なる中身で確かめる.
+	if created, err := store.Put(ctx, sumOf("hello"), strings.NewReader("other")); err != nil || created {
+		t.Fatalf("2回目の Put() = %v, %v, want false, nil", created, err)
+	}
+	got, err := os.ReadFile(store.path(sumOf("hello")))
+	if err != nil || string(got) != "hello" {
+		t.Errorf("blob の中身 = %q, %v, want %q, nil", got, err, "hello")
+	}
+	checkNoTemp(t, root)
 }
 
 func TestMkdirAllDurable_CreatesNestedDirsAndIsIdempotent(t *testing.T) {

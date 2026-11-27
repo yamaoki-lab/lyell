@@ -41,7 +41,7 @@ type Server struct {
 	log   *slog.Logger
 }
 
-// Open は, DB と blob の保存先を開く. DB の schema version が古ければ, 最新の schema version まで上げる.
+// Open は, DB と blob の保存先を開く. DB の schema version が古ければ, 最新の schema version まで上げる. blob の保存先に中断した書き込みの古い一時ファイルが残っていれば消す (blobstore.LocalStore.RemoveStaleTemp).
 func Open(ctx context.Context, cfg Config) (*Server, error) {
 	if cfg.BlobDir == "" {
 		return nil, errors.New("blob の保存先 (BlobDir) が指定されていない")
@@ -50,7 +50,12 @@ func Open(ctx context.Context, cfg Config) (*Server, error) {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	blobs := blobstore.New(blobstore.NewLocalStore(cfg.BlobDir))
+	local := blobstore.NewLocalStore(cfg.BlobDir)
+	// 落ちた Put が残した書きかけの一時ファイルを消す. 消せなくても blob の読み書きには影響しないので, 記録して続ける.
+	if err := local.RemoveStaleTemp(); err != nil {
+		log.WarnContext(ctx, "blob の書きかけの一時ファイルを消せなかった", "err", err)
+	}
+	blobs := blobstore.New(local)
 	items, err := itemstore.Open(ctx, itemstore.Config{Path: cfg.DBPath, Blobs: blobs, Logger: log})
 	if err != nil {
 		return nil, err

@@ -12,7 +12,7 @@ func TestLocalStore_PutSetsReadOnlyAttribute(t *testing.T) {
 	store := NewLocalStore(t.TempDir())
 	sum := sumOf("hello")
 
-	if err := store.Put(context.Background(), sum, strings.NewReader("hello")); err != nil {
+	if _, err := store.Put(context.Background(), sum, strings.NewReader("hello")); err != nil {
 		t.Fatalf("Put() error = %v, want nil", err)
 	}
 
