@@ -92,10 +92,13 @@ func (s *Store) ListItems(ctx context.Context, o ListOptions) (ItemList, error) 
 		list.Entries, list.More = list.Entries[:o.Limit], true
 	}
 
-	// 行を全て読み終えてから親を読む. 同じトランザクションで, 結果を読み終えていないクエリと並行して別のクエリを実行しないため.
+	// 行を全て読み終えてから親とリンクを読む. 同じトランザクションで, 結果を読み終えていないクエリと並行して別のクエリを実行しないため.
 	for i := range list.Entries {
 		head := &list.Entries[i].Head
 		if head.Parents, err = readParents(ctx, tx, head.ID); err != nil {
+			return ItemList{}, err
+		}
+		if head.Links, err = readLinks(ctx, tx, head.ID); err != nil {
 			return ItemList{}, err
 		}
 	}

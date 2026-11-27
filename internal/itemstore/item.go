@@ -74,6 +74,8 @@ type Revision struct {
 	ID      ID
 	ItemID  ID
 	Parents []ID // 1つ前の revision. 初回の revision には存在しない. item の統合では, 別の item の revision も親になる.
+	// Links は, 親以外のリンク. 型とリンク先の順に並ぶ. 間引かれた revision でも, 残すリンク (0001.sql の revision_links) を返す.
+	Links []Link
 	// Content は中身. 間引かれていれば nil.
 	Content *Content
 }
@@ -97,6 +99,9 @@ type NewItem struct {
 	Data io.Reader
 	// PutOptions は, blob を書き込む時のオプション (保存先の指定等). 無ければ保存先の既定に従う.
 	PutOptions []blobstore.PutOption
+	// Links と LinkTypes は, 最初の revision からの親以外のリンクと, それに使う型の定義. NewRevision と同じ (レンディションは作成時から derived_from を持つ).
+	Links     []Link
+	LinkTypes []LinkTypeDefinition
 }
 
 // CreateItem は, item を最初の revision と一緒に作成する. 引数が不正なら ErrInvalid を返す.
@@ -104,6 +109,10 @@ type NewItem struct {
 // 先に blob を書き込み (書き込みが完了した時点でディスクに永続化されている), その後で item と revision を1つのトランザクションで記録する. 逆の順にすると, 記録した後にクラッシュした場合に, 存在しない blob を指す revision が残る. この順なら, 途中でクラッシュしても孤立した blob が残るだけで, 後の GC で回収できる.
 func (s *Store) CreateItem(ctx context.Context, n NewItem) (Item, error) {
 	content, err := s.prepareNewItem(ctx, n, true)
+	if err != nil {
+		return Item{}, err
+	}
+	links, err := validateLinks(n.Links, n.LinkTypes)
 	if err != nil {
 		return Item{}, err
 	}
@@ -126,7 +135,13 @@ func (s *Store) CreateItem(ctx context.Context, n NewItem) (Item, error) {
 	if _, err := tx.ExecContext(ctx, "INSERT INTO items (id, kind, extension, head) VALUES (?, ?, ?, ?)", itemID[:], string(n.Kind), extensionColumn(n.Extension), revID[:]); err != nil {
 		return Item{}, err
 	}
+	if err := registerLinkTypes(ctx, tx, n.LinkTypes, true); err != nil {
+		return Item{}, err
+	}
 	if err := insertRevision(ctx, tx, revID, itemID, content); err != nil {
+		return Item{}, err
+	}
+	if err := insertLinks(ctx, tx, revID, links); err != nil {
 		return Item{}, err
 	}
 	// 外部キーの検査はここで行われるので, このエラーを無視すると, 書き込みに成功したと誤認したまま何も保存されない.
@@ -136,7 +151,7 @@ func (s *Store) CreateItem(ctx context.Context, n NewItem) (Item, error) {
 	return Item{ID: itemID, Kind: n.Kind, Extension: n.Extension, Head: revID}, nil
 }
 
-// ValidateCreateItem は, CreateItem の入力を検証し, 最初の revision の中身を返す. hasBlob が false なら blob の検証を省略する. KindExtension の item は blob を持たないので, hasBlob によらず blob を検証しない.
+// ValidateCreateItem は, CreateItem の入力を検証し, 最初の revision の中身を返す. リンクは受け取らない (API はまだ親以外のリンクを渡さない. #42). hasBlob が false なら blob の検証を省略する. KindExtension の item は blob を持たないので, hasBlob によらず blob を検証しない.
 func (s *Store) ValidateCreateItem(ctx context.Context, kind Kind, extension string, content Content, hasBlob bool) (Content, error) {
 	return s.prepareNewItem(ctx, NewItem{Kind: kind, Extension: extension, Content: content}, hasBlob)
 }
@@ -263,6 +278,9 @@ func (s *Store) Revision(ctx context.Context, id ID) (Revision, error) {
 	if rev.Parents, err = readParents(ctx, tx, id); err != nil {
 		return Revision{}, err
 	}
+	if rev.Links, err = readLinks(ctx, tx, id); err != nil {
+		return Revision{}, err
+	}
 	return rev, nil
 }
 
@@ -311,12 +329,6 @@ func (c *contentColumns) content(id ID) (*Content, error) {
 	return content, nil
 }
 
-// linkTypeParent と linkTypeParentMajor は, 親を記録するリンクの型 (0001.sql の link_types).
-const (
-	linkTypeParent      = "parent"
-	linkTypeParentMajor = 1
-)
-
 // readParents は, revision id の親 (parent 型のリンクのリンク先) を返す. 最初の revision なら nil を返す.
 //
 // 親は, id と同じ item の revision を先に, その中は ID 順に並べる (parentOrder と同じ順序). リンク先はこのマシンに無いこともあり, 無い親は item が分からないので最後に置く.
@@ -326,7 +338,7 @@ func readParents(ctx context.Context, tx *sql.Tx, id ID) ([]ID, error) {
 		JOIN revisions s ON s.id = l.source_revision
 		LEFT JOIN revisions t ON t.id = l.target_revision
 		WHERE l.source_revision = ? AND l.type_name = ? AND l.type_major = ?
-		ORDER BY t.item_id IS NOT s.item_id, t.item_id IS NULL, l.target_revision`, id[:], linkTypeParent, linkTypeParentMajor)
+		ORDER BY t.item_id IS NOT s.item_id, t.item_id IS NULL, l.target_revision`, id[:], LinkParent.Name, LinkParent.Major)
 	if err != nil {
 		return nil, err
 	}

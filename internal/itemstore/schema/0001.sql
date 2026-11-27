@@ -61,7 +61,7 @@ CREATE TABLE link_types (
   -- 名前の CHECK: 英小文字で始まり, 英小文字, 数字, _ だけからなり, 64 バイト以下.
   -- keeps_target: リンクがある間は, リンク先を削除しない (1) か.
   -- copyable: 新しい revision を作る時に, 元の revision のリンクを引き継いでよい (1) か.
-  -- unknown_fields: この版の Lyell が知らない, 定義の項目. minor で定義に項目を足すので, これが無いと, 新しい定義が古い Lyell を通った時に足された項目が失われる. revision_links の unknown_fields と同じく, sync で定義を Protobuf のメッセージとして運び, 知っている項目はそれぞれの列に, それ以外のバイト列はこの列に入れ, 送る時に組み立て直す. この版は常に NULL で書く (下の4つの型も NULL). 項目を足す版は, 古い行のこの列から新しい列へ1度だけ値を移す.
+  -- unknown_fields: この版の Lyell が知らない, 定義の項目. minor で定義に項目を足すので, これが無いと, 新しい定義が古い Lyell を通った時に足された項目が失われる. revision_links の unknown_fields と同じく, sync で定義を Protobuf のメッセージとして運び, 知っている項目はそれぞれの列に, それ以外のバイト列はこの列に入れ, 送る時に組み立て直す. 下の4つの型は NULL. 受け取った定義の知らない項目はこの列にそのまま保存し, 同じ名前と major 番号の定義を新しいものに置き換える時は, 新しい定義の値にする. 項目を足す版は, 古い行のこの列から新しい列へ1度だけ値を移す.
   -- WITHOUT ROWID: 行が小さいので, テーブル自体を主キーの順に格納する.
   name           TEXT NOT NULL CHECK (name GLOB '[a-z]*' AND name NOT GLOB '*[^a-z0-9_]*' AND length(CAST(name AS BLOB)) <= 64),
   major          INTEGER NOT NULL CHECK (major >= 0),

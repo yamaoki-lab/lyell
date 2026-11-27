@@ -274,11 +274,12 @@ func TestValidateCommitRevision_DoesNotDeadlockWithOneReadConn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateItem() error = %v, want nil", err)
 	}
-	// 読み取り用接続が1本しかなくても, ValidateCommitRevision は接続を2本同時に必要としない.
+	// 読み取り用接続が1本しかなくても, ValidateCommitRevision は接続を2本同時に必要としない. 中身は同じでリンクだけを変えるので, 変更のない revision の検査で From のリンクも読む.
 	s.read.SetMaxOpenConns(1)
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	if _, err := s.ValidateCommitRevision(ctx, NewRevision{ItemID: item.ID, From: item.Head, Content: testContent("a")}); err != nil {
+	links := []Link{{Type: LinkDerivedFrom, Target: LinkTarget{Item: item.ID}}}
+	if _, err := s.ValidateCommitRevision(ctx, NewRevision{ItemID: item.ID, From: item.Head, Content: testContent("a"), Links: links}); err != nil {
 		t.Fatalf("ValidateCommitRevision() error = %v, want nil", err)
 	}
 }
